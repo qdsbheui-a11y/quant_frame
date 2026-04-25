@@ -122,6 +122,22 @@ def _normalize_loaded_df(df_raw: pd.DataFrame, item: Dict[str, Any]) -> pd.DataF
     )
 
 
+def _normalize_postgres_bar_df(df_raw: pd.DataFrame, item: Dict[str, Any]) -> pd.DataFrame:
+    """Normalize PostgreSQL query output that is already OHLCV-shaped.
+
+    Server-side tick aggregation returns standard columns:
+    datetime/open/high/low/close/volume.  Do not apply item['schema'] here,
+    because a DB/tick item may legitimately contain raw tick column mappings
+    such as update_time/last_price/volume.  Applying that raw schema to an
+    already-aggregated result can rename or hide the standard OHLCV columns.
+    """
+    return normalize_ohlcv_df(
+        df_raw=df_raw,
+        schema=None,
+        datetime_format=item.get("datetime_format"),
+    )
+
+
 def load_csv_item(
     item: Dict[str, Any],
     project_root: Path,
@@ -238,18 +254,24 @@ def load_postgres_item(
     # millions of rows over SSH)
     # ------------------------------------------------------------------
     table_name = str(item.get("table_name") or item.get("table") or "").strip()
-    is_tick_table = table_name in {"tick_data", "ticks"} or is_tick
+    table_name_lower = table_name.lower()
+    is_tick_table = table_name_lower in {"tick_data", "ticks"} or is_tick
     if is_tick_table:
-        logger.info("Tick 数据尝试数据库端聚合: code=%s table=%s", code, table_name or "tick_data")
+        query_item = dict(item)
+        query_item.setdefault("table_schema", item.get("pg_schema") or "public")
+        query_item.setdefault("table_name", table_name or "tick_data")
+        query_item.setdefault("code_col", "instrument_id")
+
+        logger.info("Tick 数据尝试数据库端聚合: code=%s table=%s", code, query_item.get("table_name"))
         try:
-            query, params = build_postgres_tick_to_bar_query(item)
+            query, params = build_postgres_tick_to_bar_query(query_item)
             logger.info("服务器端聚合 SQL:\n%s", query)
             logger.info("服务器端聚合参数: %s", params)
             with open_postgres_connection(psycopg2, pg_cfg) as conn:
                 df_raw = pd.read_sql_query(query, conn, params=params)
             if not df_raw.empty:
                 logger.info("数据库端聚合成功: code=%s rows=%d", code, len(df_raw))
-                df = _normalize_loaded_df(df_raw, item)
+                df = _normalize_postgres_bar_df(df_raw, item)
                 return df_to_bt_pandasdata(
                     df,
                     timeframe=item.get("timeframe"),
