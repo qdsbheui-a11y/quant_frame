@@ -11,7 +11,6 @@ postgres:
     host: 8.148.188.209
     port: 22
     user: Administrator
-    password: Lbdc191500
     password_env: SSH_PASSWORD
     remote_bind_host: 127.0.0.1
     remote_bind_port: 5432
@@ -22,6 +21,8 @@ data:
     code: BTCUSDT
     code_col: instrument_id
     data_type: tick
+    table_schema: public
+    table_name: tick_data
     timeframe: minutes
     compression: 1
     start: "2026-04-10"
