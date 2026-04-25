@@ -1,0 +1,52 @@
+# 大仓位演示配置 - 展示平滑收益率曲线
+
+engine:
+  name: simple
+
+broker:
+  starting_cash: 100000.0   # 10万初始资金
+  coc: false
+  slip_perc: 0.0
+  account_mode: futures
+
+commission_default:
+  commission: 0.0001
+  mult: 10.0
+  margin: 0
+  commtype: perc
+
+symbols:
+  rb2605:
+    tick_size: 1
+    size_step: 10
+    min_size: 1
+    price_precision: 0
+    mult: 10.0
+    commission: 0.0001
+    commtype: perc
+    margin: 0
+    margin_rate: 0.10  # 10%保证金率
+
+output:
+  tag: demo_large_pos
+
+strategy:
+  name: demo_strategy
+  params:
+    fast_period: 5
+    slow_period: 15
+    size: 5
+    printlog: true
+
+data:
+  - name: rb2605
+    source: csv
+    csv: my_bt_lab/data/mock/rb2605_mock_5m.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d %H:%M:%S"

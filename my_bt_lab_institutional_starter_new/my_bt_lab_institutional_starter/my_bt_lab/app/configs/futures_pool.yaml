@@ -1,0 +1,104 @@
+engine:
+  name: backtrader
+
+broker:
+  starting_cash: 1000000
+  account_mode: futures
+  slip_perc: 0.0
+  coc: false
+
+commission_default:
+  commission: 0.0001
+  mult: 10
+  margin: 8000
+  margin_rate: null
+  commtype: perc
+
+symbols:
+  rb2605:
+    tick_size: 1
+    size_step: 1
+    min_size: 1
+    price_precision: 0
+    mult: 10
+    commission: 0.0001
+    commtype: perc
+    margin: 8000
+    margin_rate: null
+
+  i_main:
+    tick_size: 0.5
+    size_step: 1
+    min_size: 1
+    price_precision: 1
+    mult: 100
+    commission: 0.0001
+    commtype: perc
+    margin: 12000
+    margin_rate: null
+
+  ta_main:
+    tick_size: 2
+    size_step: 1
+    min_size: 1
+    price_precision: 0
+    mult: 5
+    commission: 0.0001
+    commtype: perc
+    margin: 6000
+    margin_rate: null
+
+strategy:
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_per_trade: 0.01
+    max_positions: 2
+    min_size: 1
+    printlog: true
+
+data:
+  - name: rb2605
+    source: csv
+    csv: my_bt_lab/data/rb2605_1d.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d"
+
+  - name: i_main
+    source: csv
+    csv: my_bt_lab/data/i_main_1d.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d"
+
+  - name: ta_main
+    source: csv
+    csv: my_bt_lab/data/ta_main_1d.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d"
+
+report:
+  html: true
+  title: 期货品种池回测报告
+  out_folder: report_html
+  asset_dir: null

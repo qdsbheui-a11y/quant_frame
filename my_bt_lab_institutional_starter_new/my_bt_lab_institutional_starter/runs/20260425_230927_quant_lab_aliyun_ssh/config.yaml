@@ -1,0 +1,74 @@
+postgres:
+  host: 8.148.188.209
+  port: 5432
+  dbname: quant_lab
+  user: postgres
+  password: postgres
+  password_env: PGPASSWORD
+  sslmode: disable
+  search_path: public
+  ssh:
+    enabled: true
+    host: 8.148.188.209
+    port: 22
+    user: Administrator
+    password: Lbdc191500
+    password_env: SSH_PASSWORD
+    pkey_path: ''
+    pkey_passphrase: ''
+    pkey_passphrase_env: ''
+    remote_bind_host: 127.0.0.1
+    remote_bind_port: 5432
+data:
+- name: BTCUSDT_1m
+  symbol: BTCUSDT
+  source: postgres
+  role: exec
+  timeframe: minutes
+  compression: 1
+  code: BTCUSDT
+  code_col: instrument_id
+  start: '2026-04-10'
+  end: '2026-04-10'
+  table_schema: public
+  table_name: tick_data
+strategy:
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_per_trade: 0.01
+    max_positions: 2
+    min_size: 1
+engine:
+  name: backtrader
+  cash: 1000000
+  commission: 0.0003
+broker:
+  starting_cash: 1000000.0
+  account_mode: cash
+  slip_perc: 0.0
+  coc: false
+commission_default:
+  commission: 0.0
+  mult: 1.0
+  margin: 0.0
+  commtype: perc
+symbols:
+  BTCUSDT:
+    mult: 1
+    commission: 0.0003
+tushare:
+  token_env: TUSHARE_TOKEN
+  asset: E
+  default_api: pro_bar
+  freq: D
+  use_cache: true
+  incremental: true
+  overlap_days: 3
+output:
+  tag: quant_lab_aliyun_ssh
+report:
+  html: false

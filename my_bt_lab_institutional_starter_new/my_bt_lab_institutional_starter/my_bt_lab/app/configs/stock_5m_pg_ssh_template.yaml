@@ -1,0 +1,41 @@
+postgres:
+  host: 8.148.188.209
+  port: 5432
+  dbname: quant_lab
+  user: postgre
+  password: postgre
+  password_env: PGPASSWORD
+  sslmode: disable
+  search_path: public
+  ssh:
+    enabled: true
+    host: 8.148.188.209
+    port: 22
+    user: your_ssh_user
+    # 二选一：密码登录或密钥登录
+    password_env: SSH_PASSWORD
+    pkey_path: ~/.ssh/id_rsa
+    pkey_passphrase_env: SSH_KEY_PASSPHRASE
+    # 如果 PostgreSQL 只监听在服务器本机，保持 127.0.0.1
+    remote_bind_host: 127.0.0.1
+    remote_bind_port: 5432
+
+data:
+  - name: stock_002311_5m
+    source: postgres
+    code: 002311.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+strategy:
+  name: DemoStrategy
+  params:
+    fast_period: 5
+    slow_period: 20
+
+engine:
+  name: backtrader
+  cash: 1000000
+  commission: 0.0003

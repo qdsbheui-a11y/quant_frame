@@ -1,0 +1,71 @@
+engine:
+  name: backtrader
+
+broker:
+  starting_cash: 1000000
+  account_mode: futures
+  slip_perc: 0.0
+  coc: false
+
+commission_default:
+  commission: 0.0001
+  mult: 10
+  margin: 8000
+  margin_rate: null
+  commtype: perc
+
+symbols:
+  rb2605:
+    tick_size: 1
+    size_step: 1
+    min_size: 1
+    price_precision: 0
+    mult: 10
+    commission: 0.0001
+    commtype: perc
+    margin: 8000
+    margin_rate: null
+
+output:
+  tag: donchian_mock_csv_5y_v4_demo
+
+strategy:
+  name: donchian_daily_mtf
+  params:
+    # 为了更容易在模拟数据上触发多空开平，窗口略缩短
+    entry_lookback_days: 10
+    exit_lookback_days: 5
+    breakout_add_ticks: 1
+    entry_mode: range
+    atr_period: 14
+    atr_mult: 2.0
+    trail_lv1_atr: 2.0
+    trail_lv2_atr: 5.0
+    trail_lock_atr: 2.0
+    risk_cash: 20000
+    max_positions: 1
+    min_size: 1
+    printlog: true
+
+data:
+  - name: rb2605_5m
+    symbol: rb2605
+    role: exec
+    source: csv
+    csv: my_bt_lab/data/mock/rb2605_mock_5y_5m_v4.csv
+    timeframe: minutes
+    compression: 5
+
+resample:
+  - source: rb2605_5m
+    name: rb2605_1d
+    symbol: rb2605
+    role: signal
+    timeframe: days
+    compression: 1
+
+report:
+  html: true
+  title: Donchian 多空全类型展示（5年模拟数据）
+  out_folder: report_html
+  asset_dir: null

@@ -1,0 +1,27 @@
+postgres:
+  host: 8.148.188.209
+  port: 5432
+  dbname: quant_lab
+  user: postgre
+  password: postgre
+  sslmode: disable
+  search_path: public
+
+data:
+  - name: a2605_tick
+    source: postgres
+    code: a2605
+    timeframe: tick
+    start: "2026-03-31 00:00:00"
+    end: "2026-03-31 23:59:59"
+
+strategy:
+  name: DemoStrategy
+  params:
+    fast_period: 5
+    slow_period: 20
+
+engine:
+  name: backtrader
+  cash: 1000000
+  commission: 0.0003

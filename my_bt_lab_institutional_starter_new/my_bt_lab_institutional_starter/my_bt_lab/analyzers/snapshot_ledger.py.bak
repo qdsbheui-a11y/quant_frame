@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+import backtrader as bt
+
+
+class SnapshotLedgerAnalyzer(bt.Analyzer):
+    params = dict(
+        account_mode="cash",
+        symbol_specs=None,
+        slip_perc=0.0,
+    )
+
+    def start(self):
+        self._rows: List[Dict[str, Any]] = []
+        self._fee_cum: float = 0.0
+        self._slip_cum: float = 0.0
+
+    @staticmethod
+    def _fmt_dt(dt) -> str:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _mult(self, data) -> float:
+        name = getattr(data, "_name", "")
+        specs = self.p.symbol_specs or {}
+        spec = specs.get(name, {}) if isinstance(specs, dict) else {}
+        mult = spec.get("mult")
+        if mult is not None:
+            try:
+                return float(mult)
+            except Exception:
+                pass
+        try:
+            ci = self.strategy.broker.getcommissioninfo(data)
+            return float(getattr(ci.p, "mult", 1.0) or 1.0)
+        except Exception:
+            return 1.0
+
+    def _estimate_slippage_loss(self, order) -> float:
+        slip = float(self.p.slip_perc or 0.0)
+        if slip <= 0:
+            return 0.0
+        try:
+            qty = abs(float(order.executed.size or 0.0))
+            price = float(order.executed.price or 0.0)
+            if qty <= 0 or price <= 0:
+                return 0.0
+            mult = self._mult(order.data)
+            if order.isbuy():
+                raw_price = price / (1.0 + slip)
+            else:
+                denom = 1.0 - slip
+                raw_price = price / denom if denom > 0 else price
+            return abs(price - raw_price) * qty * mult
+        except Exception:
+            return 0.0
+
+    def notify_order(self, order):
+        if order.status != order.Completed:
+            return
+        try:
+            self._fee_cum += abs(float(order.executed.comm or 0.0))
+        except Exception:
+            pass
+        self._slip_cum += self._estimate_slippage_loss(order)
+
+    def next(self):
+        dt = self.strategy.datetime.datetime(0)
+        broker = self.strategy.broker
+        account_mode = str(self.p.account_mode or "cash").lower().strip()
+
+        cash = float(broker.getcash())
+        dynamic_equity = float(broker.getvalue())
+        static_equity = cash
+        l_margin = 0.0
+        s_margin = 0.0
+        pos_count = 0
+
+        for data in self.strategy.datas:
+            pos = self.strategy.getposition(data)
+            size = float(getattr(pos, "size", 0.0) or 0.0)
+            if size == 0:
+                continue
+            pos_count += 1
+
+            cur_price = float(data.close[0])
+            avg_price = float(getattr(pos, "price", cur_price) or cur_price)
+            mult = self._mult(data)
+
+            if account_mode == "futures":
+                try:
+                    ci = broker.getcommissioninfo(data)
+                    margin_per = float(ci.get_margin(cur_price) or 0.0)
+                except Exception:
+                    margin_per = 0.0
+                if size > 0:
+                    l_margin += abs(size) * margin_per
+                else:
+                    s_margin += abs(size) * margin_per
+            else:
+                static_equity += size * avg_price * mult
+
+        if account_mode == "futures":
+            available = cash - l_margin - s_margin
+        else:
+            available = cash
+
+        self._rows.append(
+            {
+                "dt": self._fmt_dt(dt),
+                "cash": float(cash),
+                "static_equity": float(static_equity),
+                "dynamic_equity": float(dynamic_equity),
+                "l_margin": float(l_margin),
+                "s_margin": float(s_margin),
+                "available": float(available),
+                "fee_cum": float(self._fee_cum),
+                "slip_cum": float(self._slip_cum),
+                "pos_count": int(pos_count),
+            }
+        )
+
+    def get_analysis(self):
+        return self._rows

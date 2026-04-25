@@ -1,0 +1,44 @@
+engine:
+  name: backtrader
+
+broker:
+  starting_cash: 1000000.0
+  account_mode: cash  # cash 模式不检查保证金；设为 futures 则强制检查
+  slip_perc: 0.0000
+  coc: false
+
+# 全局默认佣金/保证金配置
+commission_default:
+  commission: 0.0003    # 万3手续费
+  mult: 100              # 焦煤每手100吨，合约乘数=100
+  margin: 0             # cash 模式下设为0不检查保证金
+  margin_rate: null
+  commtype: perc
+
+# 按品种覆盖
+symbols:
+  a2605_1m:
+    mult: 100           # 合约乘数
+    commission: 0.0003   # 手续费
+    margin: 0           # 现金模式不检查保证金
+    commtype: perc
+
+strategy:
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+
+data:
+  - name: a2605_1m
+    source: csv
+    csv: E:/桌面/my_bt_lab_institutional_starter_new/my_bt_lab_institutional_starter_new/tick_aggregated_1m.csv
+    schema:
+      datetime: bar_time
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    timeframe: minutes
+    compression: 1

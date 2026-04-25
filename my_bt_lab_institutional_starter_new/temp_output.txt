@@ -1,0 +1,29 @@
+﻿2026-03-28 22:14:14,735 [INFO] root - Config: C:\Users\Administrator\Desktop\my_bt_lab_institutional_starter_new\my_bt_lab_institutional_starter\my_bt_lab\app\configs\stock_5m_pg.yaml
+2026-03-28 22:14:14,735 [INFO] root - Run dir: C:\Users\Administrator\Desktop\my_bt_lab_institutional_starter_new\runs\20260328_221414_stock_5m_backtest
+2026-03-28 22:14:18,149 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002311.SZ rows=184800
+2026-03-28 22:14:18,211 [INFO] root - 数据加载成功: name=stock_002311_5m symbol=stock_002311_5m role=exec
+2026-03-28 22:14:21,088 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002312.SZ rows=184800
+2026-03-28 22:14:21,122 [INFO] root - 数据加载成功: name=stock_002312_5m symbol=stock_002312_5m role=exec
+2026-03-28 22:14:23,910 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002313.SZ rows=184800
+2026-03-28 22:14:23,945 [INFO] root - 数据加载成功: name=stock_002313_5m symbol=stock_002313_5m role=exec
+2026-03-28 22:14:26,860 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002314.SZ rows=184800
+2026-03-28 22:14:26,890 [INFO] root - 数据加载成功: name=stock_002314_5m symbol=stock_002314_5m role=exec
+2026-03-28 22:14:29,773 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002315.SZ rows=184800
+2026-03-28 22:14:29,806 [INFO] root - 数据加载成功: name=stock_002315_5m symbol=stock_002315_5m role=exec
+2026-03-28 22:14:32,599 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002316.SZ rows=184752
+2026-03-28 22:14:32,633 [INFO] root - 数据加载成功: name=stock_002316_5m symbol=stock_002316_5m role=exec
+2026-03-28 22:14:35,362 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002317.SZ rows=184800
+2026-03-28 22:14:35,396 [INFO] root - 数据加载成功: name=stock_002317_5m symbol=stock_002317_5m role=exec
+2026-03-28 22:14:38,158 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002318.SZ rows=184800
+2026-03-28 22:14:38,190 [INFO] root - 数据加载成功: name=stock_002318_5m symbol=stock_002318_5m role=exec
+2026-03-28 22:14:41,092 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002319.SZ rows=184752
+2026-03-28 22:14:41,135 [INFO] root - 数据加载成功: name=stock_002319_5m symbol=stock_002319_5m role=exec
+2026-03-28 22:14:43,934 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002320.SZ rows=184800
+2026-03-28 22:14:43,966 [INFO] root - 数据加载成功: name=stock_002320_5m symbol=stock_002320_5m role=exec
+2026-03-28 22:14:46,826 [INFO] my_bt_lab.data.loaders_bt - 数据加载成功: code=002321.SZ rows=184800
+2026-03-28 22:14:46,859 [INFO] root - 数据加载成功: name=stock_002321_5m symbol=stock_002321_5m role=exec
+2026-03-28 22:28:10,730 [INFO] root - Start Value: 100000.00
+2026-03-28 22:28:10,730 [INFO] root - End Value:   77128.26
+2026-03-28 22:28:10,730 [INFO] root - DrawDown:    {'max_drawdown_pct': 71.94392039738273, 'max_moneydown': 74607.53632849979}
+2026-03-28 22:28:10,731 [INFO] root - Trade Stats: {'closed_trades': 4337, 'net_pnl': -23032.1, 'by_symbol': {'stock_002315_5m': {'closed_trades': 361, 'net_pnl': 20535.76}, 'stock_002312_5m': {'closed_trades': 451, 'net_pnl': 24902.95}, 'stock_002314_5m': {'closed_trades': 491, 'net_pnl': 7069.0}, 'stock_002319_5m': {'closed_trades': 360, 'net_pnl': 14420.62}, 'stock_002320_5m': {'closed_trades': 346, 'net_pnl': -17666.35}, 'stock_002313_5m': {'closed_trades': 345, 'net_pnl': 11629.47}, 'stock_002318_5m': {'closed_trades': 316, 'net_pnl': 8399.04}, 'stock_002316_5m': {'closed_trades': 449, 'net_pnl': -39422.07}, 'stock_002321_5m': {'closed_trades': 469, 'net_pnl': -5144.96}, 'stock_002311_5m': {'closed_trades': 452, 'net_pnl': -33002.09}, 'stock_002317_5m': {'closed_trades': 297, 'net_pnl': -14753.48}}}
+2026-03-28 22:30:17,974 [INFO] root - Saved outputs to: C:\Users\Administrator\Desktop\my_bt_lab_institutional_starter_new\runs\20260328_221414_stock_5m_backtest

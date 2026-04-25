@@ -1,0 +1,69 @@
+engine:
+  name: simple
+
+broker:
+  starting_cash: 100000.0
+  coc: false
+  slip_perc: 0.0005   # 先设为0，后续你再加（如 0.0005）
+  account_mode: futures
+
+# Tushare 数据源配置（推荐用环境变量，不要把 token 写进 yaml / git）
+tushare:
+  token_env: TUSHARE_TOKEN
+  default_api: pro_bar   # pro_bar / daily
+  asset: E               # 股票=E；期货=FT；指数=I（pro_bar 参数）
+  freq: D                # D/W/M 或分钟（如 5min，需权限）
+  adj: qfq               # 股票复权：None / qfq / hfq（daily接口不生效）
+  use_cache: true
+  incremental: true      # 缓存存在时增量更新（会回补 overlap_days）
+  overlap_days: 3
+
+# 全局默认（兜底）
+commission_default:
+  commission: 0.0005  # 万5（示例）
+  mult: 1            # 合约乘数（默认）
+  margin: 0.0         # 每手保证金（默认）；0 表示不启用保证金约束
+  margin_rate: null   # 若填写如 0.12，则用 price * mult * margin_rate
+  commtype: perc      # perc / fixed
+
+# 按品种覆盖（name 必须和 data 里的 name 一致）
+symbols:
+  tushare:
+    tick_size: 0.5
+    size_step: 100
+    min_size: 100
+    price_precision: 1
+    mult: 1.0
+    commission: 0.0005
+    commtype: perc
+    margin: 8000
+    margin_rate: null
+
+output:
+  tag: cta_demo
+
+strategy:
+  # new style
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_per_trade: 0.01
+    max_positions: 2
+    min_size: 1
+    printlog: true
+
+data:
+  - name: tushare
+    source: csv
+    csv: my_bt_lab/data/000001_SZ_qfq_D.csv
+    schema:
+      datetime: trade_date
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: vol
+    datetime_format: "%Y%m%d"

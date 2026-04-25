@@ -1,0 +1,50 @@
+# 演示策略配置 - 展示平滑收益率曲线
+
+engine:
+  name: simple
+
+broker:
+  starting_cash: 1000000.0  # 100万初始资金
+  coc: false
+  slip_perc: 0.0
+  account_mode: futures
+
+commission_default:
+  commission: 0.0003  # 万3手续费
+  mult: 10.0          # 螺纹钢乘数
+  margin: 8000        # 每手保证金
+  commtype: perc
+
+symbols:
+  rb2605:
+    tick_size: 1
+    size_step: 10
+    min_size: 1
+    price_precision: 0
+    mult: 10.0
+    commission: 0.0003
+    commtype: perc
+    margin: 8000
+
+output:
+  tag: demo_smooth_equity
+
+strategy:
+  name: demo_strategy
+  params:
+    fast_period: 10
+    slow_period: 30
+    printlog: false
+
+data:
+  - name: rb2605
+    source: csv
+    csv: my_bt_lab/data/mock/rb2605_mock_5m.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d %H:%M:%S"

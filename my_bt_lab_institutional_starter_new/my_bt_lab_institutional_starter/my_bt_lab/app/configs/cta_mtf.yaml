@@ -1,0 +1,73 @@
+engine:
+  name: backtrader
+
+broker:
+  starting_cash: 1000000
+  account_mode: futures
+  slip_perc: 0.0
+  coc: false
+
+commission_default:
+  commission: 0.0001
+  mult: 10
+  margin: 8000
+  margin_rate: null
+  commtype: perc
+
+symbols:
+  rb2605:
+    tick_size: 1
+    size_step: 1
+    min_size: 1
+    price_precision: 0
+    mult: 10
+    commission: 0.0001
+    commtype: perc
+    margin: 8000
+    margin_rate: null
+
+output:
+  tag: cta_mtf_demo
+
+strategy:
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+    atr_period: 14
+    atr_stop_mult: 2.0
+    risk_per_trade: 0.01
+    max_positions: 1
+    min_size: 1
+    printlog: true
+
+data:
+  - name: rb2605_1m
+    symbol: rb2605
+    role: exec
+    source: csv
+    csv: my_bt_lab/data/rb2605_1m.csv
+    timeframe: minutes
+    compression: 1
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    datetime_format: "%Y-%m-%d %H:%M:%S"
+
+resample:
+  - source: rb2605_1m
+    name: rb2605_60m
+    symbol: rb2605
+    role: signal
+    timeframe: minutes
+    compression: 60
+
+report:
+  html: true
+  title: 1m执行_60m信号_回测报告
+  out_folder: report_html
+  asset_dir: null

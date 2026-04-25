@@ -1,0 +1,17 @@
+import backtrader as bt
+
+
+class SimpleFuturesComm(bt.CommInfoBase):
+    params = dict(
+        commission=0.0005,
+        mult=10.0,
+        margin=10000.0,
+        margin_rate=None,
+        commtype=bt.CommInfoBase.COMM_PERC,
+        stocklike=False,
+    )
+
+    def get_margin(self, price):
+        if self.p.margin_rate is not None:
+            return float(price) * float(self.p.mult) * float(self.p.margin_rate)
+        return float(self.p.margin)

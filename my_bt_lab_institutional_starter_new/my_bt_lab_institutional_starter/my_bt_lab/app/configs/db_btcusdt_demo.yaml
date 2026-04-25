@@ -1,0 +1,42 @@
+data:
+  - name: BTCUSDT_1m
+    source: csv
+    csv: BTCUSDT_1m_from_db.csv
+    schema:
+      datetime: datetime
+      open: open
+      high: high
+      low: low
+      close: close
+      volume: volume
+    timeframe: minutes
+    compression: 1
+
+strategy:
+  name: cta_trend
+  params:
+    fast: 10
+    slow: 30
+    risk_per_trade: 0.0001
+
+broker:
+  starting_cash: 100000000.0
+  account_mode: cash
+
+commission_default:
+  commission: 0.0003
+  mult: 1
+  margin: 0
+  commtype: perc
+
+symbols:
+  BTCUSDT_1m:
+    mult: 1
+    commission: 0.0003
+    margin: 0
+    commtype: perc
+
+engine:
+  name: backtrader
+  cash: 100000000
+  commission: 0.0003

@@ -1,0 +1,98 @@
+postgres:
+  host: 8.148.188.209
+  port: 5432
+  dbname: quant_lab
+  user: postgre
+  password: postgre
+  password_env: PGPASSWORD
+  sslmode: disable
+  search_path: public
+
+data:
+  - name: stock_002311_5m
+    source: postgres
+    code: 002311.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002312_5m
+    source: postgres
+    code: 002312.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002313_5m
+    source: postgres
+    code: 002313.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002314_5m
+    source: postgres
+    code: 002314.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002315_5m
+    source: postgres
+    code: 002315.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002316_5m
+    source: postgres
+    code: 002316.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002317_5m
+    source: postgres
+    code: 002317.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002318_5m
+    source: postgres
+    code: 002318.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002319_5m
+    source: postgres
+    code: 002319.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002320_5m
+    source: postgres
+    code: 002320.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
+
+  - name: stock_002321_5m
+    source: postgres
+    code: 002321.SZ
+    timeframe: minutes
+    compression: 5
+    start: "2010-01-01 00:00:00"
+    end: "2025-12-31 23:59:59"
