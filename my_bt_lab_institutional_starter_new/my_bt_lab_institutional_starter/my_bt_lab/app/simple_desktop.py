@@ -6,7 +6,7 @@ import os
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from PySide6.QtCore import QThread, Qt, Signal
@@ -25,7 +25,6 @@ try:
         QMessageBox,
         QPushButton,
         QPlainTextEdit,
-        QSpinBox,
         QTableWidget,
         QTableWidgetItem,
         QTabWidget,
@@ -48,7 +47,32 @@ except Exception as exc:  # pragma: no cover
 APP_TITLE = "量化回测助手 - 普通用户版"
 
 
-RISK_PRESETS = {
+DATA_PRESETS: Dict[str, Dict[str, Any]] = {
+    "BTCUSDT tick 数据库回测 - 1分钟K": {
+        "code": "BTCUSDT",
+        "period": "1分钟",
+        "start": "2026-04-10",
+        "end": "2026-04-10",
+        "hint": "读取数据库 tick_data，并在数据库端聚合为 1分钟K。",
+    },
+    "BTCUSDT tick 数据库回测 - 5分钟K": {
+        "code": "BTCUSDT",
+        "period": "5分钟",
+        "start": "2026-04-10",
+        "end": "2026-04-10",
+        "hint": "读取数据库 tick_data，并在数据库端聚合为 5分钟K。",
+    },
+    "自定义数据库 tick 回测": {
+        "code": "BTCUSDT",
+        "period": "1分钟",
+        "start": "2026-04-10",
+        "end": "2026-04-10",
+        "hint": "自定义品种代码和日期；底层仍使用 PostgreSQL tick_data 预设。",
+    },
+}
+
+
+RISK_PRESETS: Dict[str, Optional[float]] = {
     "保守 - 单笔风险 0.005%": 0.00005,
     "平衡 - 单笔风险 0.01%": 0.0001,
     "积极 - 单笔风险 0.05%": 0.0005,
@@ -56,12 +80,19 @@ RISK_PRESETS = {
 }
 
 
-PERIOD_PRESETS = {
-    "1分钟": 1,
-    "5分钟": 5,
-    "15分钟": 15,
-    "30分钟": 30,
-    "60分钟": 60,
+PERIOD_PRESETS: Dict[str, Tuple[str, int]] = {
+    "Tick原始数据（自动转1分钟K）": ("minutes", 1),
+    "1分钟": ("minutes", 1),
+    "5分钟": ("minutes", 5),
+    "15分钟": ("minutes", 15),
+    "30分钟": ("minutes", 30),
+    "60分钟": ("minutes", 60),
+}
+
+
+STRATEGY_PRESETS: Dict[str, str] = {
+    "CTA 趋势策略（均线 + ATR）": "cta_trend",
+    "Donchian 突破策略（高级）": "donchian_daily_mtf",
 }
 
 
@@ -81,6 +112,10 @@ def _safe_read_text_tail(path: Path, lines: int = 200) -> str:
     return "\n".join(parts[-lines:])
 
 
+def _set_date(widget: QDateEdit, value: str) -> None:
+    widget.setDate(datetime.strptime(value, "%Y-%m-%d").date())
+
+
 def _metric_rows(result) -> List[Dict[str, Any]]:
     trade_stats = getattr(result, "trade_stats", {}) or {}
     drawdown = getattr(result, "drawdown", {}) or {}
@@ -98,11 +133,39 @@ def _metric_rows(result) -> List[Dict[str, Any]]:
     ]
 
 
-def _build_btcusdt_tick_config(
+def _strategy_params(strategy_name: str, initial_cash: float, risk_per_trade: float) -> Dict[str, Any]:
+    if strategy_name == "donchian_daily_mtf":
+        return {
+            "entry_lookback_days": 20,
+            "exit_lookback_days": 10,
+            "breakout_add_ticks": 1,
+            "entry_mode": "range",
+            "atr_period": 20,
+            "atr_mult": 2.0,
+            "trail_lv1_atr": 2.0,
+            "trail_lv2_atr": 5.0,
+            "trail_lock_atr": 2.0,
+            "risk_cash": float(initial_cash) * float(risk_per_trade),
+            "max_positions": 99,
+            "min_size": 1,
+        }
+    return {
+        "fast": 10,
+        "slow": 30,
+        "atr_period": 14,
+        "atr_stop_mult": 2.0,
+        "risk_per_trade": risk_per_trade,
+        "max_positions": 2,
+        "min_size": 1,
+    }
+
+
+def _build_db_tick_config(
     *,
     code: str,
     start: str,
     end: str,
+    timeframe: str,
     compression: int,
     initial_cash: float,
     risk_per_trade: float,
@@ -140,7 +203,7 @@ def _build_btcusdt_tick_config(
                 "data_type": "tick",
                 "table_schema": "public",
                 "table_name": "tick_data",
-                "timeframe": "minutes",
+                "timeframe": timeframe,
                 "compression": compression,
                 "start": start,
                 "end": end,
@@ -148,15 +211,7 @@ def _build_btcusdt_tick_config(
         ],
         "strategy": {
             "name": strategy_name,
-            "params": {
-                "fast": 10,
-                "slow": 30,
-                "atr_period": 14,
-                "atr_stop_mult": 2.0,
-                "risk_per_trade": risk_per_trade,
-                "max_positions": 2,
-                "min_size": 1,
-            },
+            "params": _strategy_params(strategy_name, initial_cash, risk_per_trade),
         },
         "broker": {
             "starting_cash": float(initial_cash),
@@ -275,6 +330,8 @@ if QT_AVAILABLE:
             self.current_run_dir: Optional[Path] = None
             self._build_ui()
             self._apply_style()
+            self._on_data_preset_changed(self.preset_combo.currentText())
+            self._on_risk_preset_changed(self.risk_combo.currentText())
 
         def _apply_style(self) -> None:
             QApplication.setStyle("Fusion")
@@ -283,9 +340,19 @@ if QT_AVAILABLE:
                 QMainWindow, QWidget { background-color: #111827; color: #E5E7EB; font-size: 13px; }
                 QGroupBox { border: 1px solid #374151; border-radius: 8px; margin-top: 12px; padding-top: 14px; font-weight: 600; }
                 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
-                QLineEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTableWidget {
+                QLineEdit, QComboBox, QDateEdit, QDoubleSpinBox, QPlainTextEdit, QTableWidget {
                     background-color: #0F172A; color: #E5E7EB; border: 1px solid #334155; border-radius: 5px; padding: 4px;
                 }
+                QComboBox:focus, QLineEdit:focus, QDateEdit:focus, QDoubleSpinBox:focus {
+                    border: 2px solid #38BDF8; background-color: #0B1220;
+                }
+                QComboBox::drop-down { border-left: 1px solid #334155; width: 26px; }
+                QComboBox QAbstractItemView {
+                    background-color: #0F172A; color: #E5E7EB; border: 1px solid #38BDF8;
+                    selection-background-color: #2563EB; selection-color: #FFFFFF; outline: 0;
+                }
+                QComboBox QAbstractItemView::item { min-height: 28px; padding: 4px 8px; }
+                QComboBox QAbstractItemView::item:selected { background-color: #2563EB; color: #FFFFFF; }
                 QTableWidget::item { background-color: #0F172A; color: #E5E7EB; }
                 QTableWidget::item:alternate { background-color: #172033; color: #E5E7EB; }
                 QTableWidget::item:selected { background-color: #0E7490; color: #FFFFFF; }
@@ -295,6 +362,7 @@ if QT_AVAILABLE:
                 QHeaderView::section { background-color: #1F2937; color: #E5E7EB; padding: 5px; border: 1px solid #374151; }
                 QLabel#title { font-size: 24px; font-weight: 700; color: #F8FAFC; }
                 QLabel#hint { color: #94A3B8; }
+                QLabel#presetHint { color: #93C5FD; padding: 4px 0; }
                 QLabel#status { color: #93C5FD; font-weight: 600; padding: 6px 0; }
                 QLabel#chartFallback { background-color: #0F172A; color: #94A3B8; border: 1px solid #334155; padding: 12px; }
                 """
@@ -320,14 +388,15 @@ if QT_AVAILABLE:
 
         def _build_form_panel(self) -> QWidget:
             panel = QWidget()
-            panel.setFixedWidth(410)
+            panel.setFixedWidth(430)
             layout = QVBoxLayout(panel)
             layout.setContentsMargins(0, 0, 8, 0)
 
             preset_box = QGroupBox("1. 数据与品种")
             form = QFormLayout(preset_box)
             self.preset_combo = QComboBox()
-            self.preset_combo.addItems(["BTCUSDT tick 数据库回测"])
+            self.preset_combo.addItems(list(DATA_PRESETS.keys()))
+            self.preset_combo.currentTextChanged.connect(self._on_data_preset_changed)
             self.code_edit = QLineEdit("BTCUSDT")
             self.period_combo = QComboBox()
             self.period_combo.addItems(list(PERIOD_PRESETS.keys()))
@@ -335,16 +404,18 @@ if QT_AVAILABLE:
             self.start_date = QDateEdit()
             self.start_date.setCalendarPopup(True)
             self.start_date.setDisplayFormat("yyyy-MM-dd")
-            self.start_date.setDate(datetime.strptime("2026-04-10", "%Y-%m-%d").date())
             self.end_date = QDateEdit()
             self.end_date.setCalendarPopup(True)
             self.end_date.setDisplayFormat("yyyy-MM-dd")
-            self.end_date.setDate(datetime.strptime("2026-04-10", "%Y-%m-%d").date())
+            self.preset_hint = QLabel("")
+            self.preset_hint.setObjectName("presetHint")
+            self.preset_hint.setWordWrap(True)
             form.addRow("数据预设", self.preset_combo)
             form.addRow("交易品种", self.code_edit)
             form.addRow("K线周期", self.period_combo)
             form.addRow("开始日期", self.start_date)
             form.addRow("结束日期", self.end_date)
+            form.addRow("说明", self.preset_hint)
             layout.addWidget(preset_box)
 
             account_box = QGroupBox("2. 账户与风险")
@@ -357,13 +428,12 @@ if QT_AVAILABLE:
             self.risk_combo = QComboBox()
             self.risk_combo.addItems(list(RISK_PRESETS.keys()))
             self.risk_combo.setCurrentText("平衡 - 单笔风险 0.01%")
+            self.risk_combo.currentTextChanged.connect(self._on_risk_preset_changed)
             self.risk_spin = QDoubleSpinBox()
             self.risk_spin.setRange(0.000001, 0.1)
             self.risk_spin.setDecimals(6)
             self.risk_spin.setSingleStep(0.00001)
             self.risk_spin.setValue(0.0001)
-            self.risk_spin.setEnabled(False)
-            self.risk_combo.currentTextChanged.connect(self._on_risk_preset_changed)
             account_form.addRow("初始资金", self.cash_spin)
             account_form.addRow("风险级别", self.risk_combo)
             account_form.addRow("单笔风险比例", self.risk_spin)
@@ -372,7 +442,7 @@ if QT_AVAILABLE:
             strategy_box = QGroupBox("3. 策略")
             strategy_form = QFormLayout(strategy_box)
             self.strategy_combo = QComboBox()
-            self.strategy_combo.addItems(["cta_trend"])
+            self.strategy_combo.addItems(list(STRATEGY_PRESETS.keys()))
             strategy_form.addRow("策略模板", self.strategy_combo)
             layout.addWidget(strategy_box)
 
@@ -512,11 +582,23 @@ if QT_AVAILABLE:
             self._set_line_chart(self.equity_chart, "资金曲线", equity_points, "equity")
             self._set_line_chart(self.drawdown_chart, "回撤曲线", drawdown_points, "drawdown %")
 
+        def _on_data_preset_changed(self, text: str) -> None:
+            preset = DATA_PRESETS.get(text)
+            if not preset:
+                return
+            self.code_edit.setText(str(preset.get("code") or "BTCUSDT"))
+            period = str(preset.get("period") or "1分钟")
+            if period in PERIOD_PRESETS:
+                self.period_combo.setCurrentText(period)
+            _set_date(self.start_date, str(preset.get("start") or "2026-04-10"))
+            _set_date(self.end_date, str(preset.get("end") or "2026-04-10"))
+            self.preset_hint.setText(str(preset.get("hint") or ""))
+
         def _on_risk_preset_changed(self, text: str) -> None:
             value = RISK_PRESETS.get(text)
-            self.risk_spin.setEnabled(value is None)
             if value is not None:
                 self.risk_spin.setValue(value)
+            self.risk_spin.setEnabled(True)
 
         def _validate(self) -> Optional[str]:
             code = self.code_edit.text().strip()
@@ -537,15 +619,17 @@ if QT_AVAILABLE:
             code = self.code_edit.text().strip()
             start = _format_date(self.start_date.date())
             end = _format_date(self.end_date.date())
-            compression = PERIOD_PRESETS[self.period_combo.currentText()]
-            return _build_btcusdt_tick_config(
+            timeframe, compression = PERIOD_PRESETS[self.period_combo.currentText()]
+            strategy_name = STRATEGY_PRESETS[self.strategy_combo.currentText()]
+            return _build_db_tick_config(
                 code=code,
                 start=start,
                 end=end,
+                timeframe=timeframe,
                 compression=compression,
                 initial_cash=float(self.cash_spin.value()),
                 risk_per_trade=float(self.risk_spin.value()),
-                strategy_name=self.strategy_combo.currentText(),
+                strategy_name=strategy_name,
             )
 
         def start_backtest(self) -> None:
