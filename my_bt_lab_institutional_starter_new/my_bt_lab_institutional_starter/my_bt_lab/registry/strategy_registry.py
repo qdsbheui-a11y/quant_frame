@@ -19,6 +19,10 @@ EXPLICIT_STRATEGY_REGISTRY: Dict[str, Type[Any]] = {
     "donchian_daily_mtf": DonchianDailyMtfStrategy,
 }
 
+# Runtime-loaded strategies selected from arbitrary .py files in the desktop UI.
+# Keep these separate so refresh_strategy_registry() does not wipe them out.
+EXTERNAL_STRATEGY_REGISTRY: Dict[str, Type[Any]] = {}
+
 # Non-fatal import/discovery errors are stored here so UI/diagnostics can show them later.
 STRATEGY_LOAD_ERRORS: Dict[str, str] = {}
 
@@ -75,31 +79,31 @@ def _discover_strategy_classes() -> Dict[str, Type[Any]]:
     STRATEGY_LOAD_ERRORS.clear()
 
     strategies_dir = Path(__file__).resolve().parents[1] / "strategies"
-    if not strategies_dir.exists():
-        return registry
+    if strategies_dir.exists():
+        skip_modules = {
+            "__init__",
+            "base_strategy",
+            "cta_trend",
+            "donchian_daily_mtf",
+        }
 
-    skip_modules = {
-        "__init__",
-        "base_strategy",
-        "cta_trend",
-        "donchian_daily_mtf",
-    }
+        for path in sorted(strategies_dir.glob("*.py"), key=lambda p: p.name.lower()):
+            module_stem = path.stem
+            if module_stem.startswith("_") or module_stem in skip_modules:
+                continue
 
-    for path in sorted(strategies_dir.glob("*.py"), key=lambda p: p.name.lower()):
-        module_stem = path.stem
-        if module_stem.startswith("_") or module_stem in skip_modules:
-            continue
+            module_name = f"my_bt_lab.strategies.{module_stem}"
+            try:
+                module = importlib.import_module(module_name)
+            except Exception as exc:
+                # Keep one bad custom strategy from breaking the whole app.
+                STRATEGY_LOAD_ERRORS[module_stem] = f"导入失败: {exc}"
+                continue
 
-        module_name = f"my_bt_lab.strategies.{module_stem}"
-        try:
-            module = importlib.import_module(module_name)
-        except Exception as exc:
-            # Keep one bad custom strategy from breaking the whole app.
-            STRATEGY_LOAD_ERRORS[module_stem] = f"导入失败: {exc}"
-            continue
+            _register_discovered_classes(registry, module_stem, _strategy_classes_from_module(module))
 
-        _register_discovered_classes(registry, module_stem, _strategy_classes_from_module(module))
-
+    # Re-attach runtime-loaded external strategies after local package discovery.
+    registry.update(EXTERNAL_STRATEGY_REGISTRY)
     return registry
 
 
@@ -107,18 +111,20 @@ STRATEGY_REGISTRY: Dict[str, Type[Any]] = _discover_strategy_classes()
 
 
 def refresh_strategy_registry() -> Dict[str, Type[Any]]:
-    """Refresh strategy registry after adding a strategy module at runtime."""
+    """Refresh built-in/package strategy discovery without losing external strategy files."""
     global STRATEGY_REGISTRY
     STRATEGY_REGISTRY = _discover_strategy_classes()
     return STRATEGY_REGISTRY
 
 
-def register_strategy(name: str, strategy_cls: Type[Any]) -> None:
+def register_strategy(name: str, strategy_cls: Type[Any], *, external: bool = False) -> None:
     key = str(name or "").strip().lower()
     if not key:
         raise KeyError("strategy.name 不能为空")
     if not inspect.isclass(strategy_cls):
         raise TypeError("strategy_cls 必须是策略类")
+    if external:
+        EXTERNAL_STRATEGY_REGISTRY[key] = strategy_cls
     STRATEGY_REGISTRY[key] = strategy_cls
 
 
@@ -158,7 +164,7 @@ def load_strategy_from_file(path: str | Path, name: str | None = None) -> Tuple[
     if not key:
         key = _camel_to_snake(selected_cls.__name__)
 
-    register_strategy(key, selected_cls)
+    register_strategy(key, selected_cls, external=True)
     return key, selected_cls
 
 
