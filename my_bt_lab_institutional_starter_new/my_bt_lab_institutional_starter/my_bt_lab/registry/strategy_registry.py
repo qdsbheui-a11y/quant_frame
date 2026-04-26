@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import inspect
 import re
+import sys
 from pathlib import Path
-from typing import Any, Dict, Type
+from typing import Any, Dict, Tuple, Type
 
 # Built-in Backtrader strategies
 from my_bt_lab.strategies.base_strategy import BaseStrategy
@@ -40,6 +42,34 @@ def _strategy_key(module_stem: str, class_name: str, existing: Dict[str, Type[An
     return f"{class_key}_{i}"
 
 
+def _strategy_classes_from_module(module) -> list[Type[Any]]:
+    discovered = []
+    for _, cls in inspect.getmembers(module, inspect.isclass):
+        if cls.__module__ != module.__name__:
+            continue
+        try:
+            is_strategy = issubclass(cls, BaseStrategy) and cls is not BaseStrategy
+        except Exception:
+            is_strategy = False
+        if is_strategy:
+            discovered.append(cls)
+    return discovered
+
+
+def _register_discovered_classes(
+    registry: Dict[str, Type[Any]],
+    module_stem: str,
+    classes: list[Type[Any]],
+) -> Dict[str, Type[Any]]:
+    for cls in classes:
+        explicit_name = getattr(cls, "strategy_name", None)
+        key = str(explicit_name).strip().lower() if explicit_name else _strategy_key(module_stem, cls.__name__, registry)
+        if not key:
+            key = _strategy_key(module_stem, cls.__name__, registry)
+        registry[key] = cls
+    return registry
+
+
 def _discover_strategy_classes() -> Dict[str, Type[Any]]:
     registry: Dict[str, Type[Any]] = dict(EXPLICIT_STRATEGY_REGISTRY)
     STRATEGY_LOAD_ERRORS.clear()
@@ -68,23 +98,7 @@ def _discover_strategy_classes() -> Dict[str, Type[Any]]:
             STRATEGY_LOAD_ERRORS[module_stem] = f"导入失败: {exc}"
             continue
 
-        discovered = []
-        for _, cls in inspect.getmembers(module, inspect.isclass):
-            if cls.__module__ != module.__name__:
-                continue
-            try:
-                is_strategy = issubclass(cls, BaseStrategy) and cls is not BaseStrategy
-            except Exception:
-                is_strategy = False
-            if is_strategy:
-                discovered.append(cls)
-
-        for cls in discovered:
-            explicit_name = getattr(cls, "strategy_name", None)
-            key = str(explicit_name).strip().lower() if explicit_name else _strategy_key(module_stem, cls.__name__, registry)
-            if not key:
-                key = _strategy_key(module_stem, cls.__name__, registry)
-            registry[key] = cls
+        _register_discovered_classes(registry, module_stem, _strategy_classes_from_module(module))
 
     return registry
 
@@ -106,6 +120,46 @@ def register_strategy(name: str, strategy_cls: Type[Any]) -> None:
     if not inspect.isclass(strategy_cls):
         raise TypeError("strategy_cls 必须是策略类")
     STRATEGY_REGISTRY[key] = strategy_cls
+
+
+def load_strategy_from_file(path: str | Path, name: str | None = None) -> Tuple[str, Type[Any]]:
+    """Load a strategy class from an arbitrary .py file and register it.
+
+    The file must define at least one class that inherits BaseStrategy.
+    If multiple strategy classes exist, the first class sorted by class name is used
+    unless the class defines `strategy_name`.
+    """
+    strategy_path = Path(path).expanduser().resolve()
+    if not strategy_path.exists():
+        raise FileNotFoundError(f"策略文件不存在: {strategy_path}")
+    if strategy_path.suffix.lower() != ".py":
+        raise ValueError("外部策略文件必须是 .py 文件")
+
+    module_name = f"my_bt_lab_external_strategy_{abs(hash(str(strategy_path)))}"
+    spec = importlib.util.spec_from_file_location(module_name, strategy_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载策略文件: {strategy_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+
+    classes = sorted(_strategy_classes_from_module(module), key=lambda cls: cls.__name__)
+    if not classes:
+        raise ValueError("该文件中没有找到继承 BaseStrategy 的策略类")
+
+    selected_cls = classes[0]
+    explicit_name = getattr(selected_cls, "strategy_name", None)
+    key = str(name or explicit_name or strategy_path.stem).strip().lower()
+    if not key:
+        key = _camel_to_snake(selected_cls.__name__)
+
+    register_strategy(key, selected_cls)
+    return key, selected_cls
 
 
 def get_strategy(name: str):
