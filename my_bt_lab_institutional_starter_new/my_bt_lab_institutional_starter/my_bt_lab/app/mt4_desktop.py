@@ -613,6 +613,12 @@ if QT_AVAILABLE:
             layout.addWidget(self.chart_hint)
 
             self.chart_workspace = QMdiArea()
+            self.chart_workspace.setStyleSheet("""
+            QMdiArea {
+                background-color: #0B1220;
+                border: 1px solid #334155;
+            }
+            """)
             self.chart_workspace.setViewMode(QMdiArea.SubWindowView)
             self.chart_workspace.setActivationOrder(QMdiArea.CreationOrder)
             layout.addWidget(self.chart_workspace)
