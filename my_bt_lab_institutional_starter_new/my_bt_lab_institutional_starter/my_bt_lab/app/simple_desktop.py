@@ -151,6 +151,224 @@ def _period_label(timeframe: Any, compression: Any) -> str:
     return "1分钟"
 
 
+def _norm_source(source: Any) -> str:
+    text = str(source or "csv").strip().lower()
+    if text in {"db", "postgresql"}:
+        return "postgres"
+    if text in {"xlsx", "xls"}:
+        return "excel"
+    return text or "csv"
+
+
+def _resolve_project_path(path_value: Any) -> Optional[Path]:
+    raw = str(path_value or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path
+    return (project_root() / path).resolve()
+
+
+def _infer_ts_code_from_path(path_value: Any) -> Optional[str]:
+    import re
+
+    stem = Path(str(path_value or "")).stem
+    match = re.search(r"(\d{6})[_-]([A-Za-z]{2})", stem)
+    if match:
+        return f"{match.group(1)}.{match.group(2).upper()}"
+    return None
+
+
+def _csv_datetime_issues(csv_path: Path, item: Dict[str, Any]) -> List[str]:
+    """Lightweight CSV schema/date-format check for the template dropdown.
+
+    This intentionally reads only a small sample. It is not a full data load.
+    """
+    if not csv_path.exists():
+        return []
+
+    try:
+        import pandas as pd
+    except Exception:
+        return []
+
+    read_kwargs: Dict[str, Any] = {
+        "sep": item.get("sep", ","),
+        "encoding": item.get("encoding", "utf-8"),
+        "nrows": 200,
+    }
+    if item.get("header_row") is not None:
+        read_kwargs["header"] = item.get("header_row")
+    if item.get("skiprows") is not None:
+        read_kwargs["skiprows"] = item.get("skiprows")
+
+    try:
+        sample = pd.read_csv(csv_path, **read_kwargs)
+    except Exception as exc:
+        return [f"CSV读取失败：{exc}"]
+
+    if sample.empty:
+        return ["CSV文件为空或前200行无有效数据。"]
+
+    sample.columns = [str(col).strip().lower() for col in sample.columns]
+    columns = set(sample.columns)
+
+    schema = item.get("schema") if isinstance(item.get("schema"), dict) else {}
+    dt_col = (
+        item.get("datetime_col")
+        or schema.get("datetime")
+        or item.get("date_col")
+        or None
+    )
+    if dt_col:
+        dt_col = str(dt_col).strip().lower()
+    else:
+        for candidate in ["datetime", "date", "trade_date", "trade_time", "time", "timestamp", "dt"]:
+            if candidate in columns:
+                dt_col = candidate
+                break
+
+    if not dt_col:
+        return [f"找不到日期列。当前列={list(sample.columns)}。"]
+
+    if dt_col not in columns:
+        return [f"日期列配置为 {dt_col}，但CSV中不存在。当前列={list(sample.columns)}。"]
+
+    datetime_format = item.get("datetime_format")
+    raw_values = sample[dt_col].dropna().astype(str).str.strip()
+    if raw_values.empty:
+        return [f"日期列 {dt_col} 为空。"]
+
+    try:
+        if datetime_format:
+            parsed = pd.to_datetime(raw_values, format=str(datetime_format), errors="coerce")
+        else:
+            parsed = pd.to_datetime(raw_values, errors="coerce")
+    except Exception as exc:
+        return [f"日期格式解析异常：{exc}"]
+
+    bad_count = int(parsed.isna().sum())
+    if bad_count == len(parsed):
+        fmt = f"，datetime_format={datetime_format}" if datetime_format else ""
+        return [f"日期解析全部失败：列={dt_col}{fmt}。请检查 YAML 的 schema/datetime_format。"]
+
+    return []
+
+
+def _template_precheck(cfg: Dict[str, Any]) -> Tuple[str, List[str], bool]:
+    """Return (status, issues, can_run) for one YAML template.
+
+    Status is meant to be shown directly in the dropdown.
+    """
+    data_items = cfg.get("data", []) or []
+    if not data_items:
+        return "不可运行", ["模板没有 data 配置。"], False
+
+    issues: List[str] = []
+    warnings: List[str] = []
+    tcfg = cfg.get("tushare", {}) or {}
+    token_env = str(tcfg.get("token_env") or "TUSHARE_TOKEN")
+
+    for item in data_items:
+        source = _norm_source(item.get("source"))
+        name = str(item.get("name") or item.get("symbol") or item.get("code") or item.get("ts_code") or "数据源")
+
+        if source == "csv":
+            csv_path = _resolve_project_path(item.get("csv") or item.get("cache_csv"))
+            if not csv_path:
+                issues.append(f"{name}: 未配置CSV文件路径。")
+                continue
+
+            if not csv_path.exists():
+                ts_code = item.get("ts_code") or _infer_ts_code_from_path(csv_path)
+                can_auto_tushare = bool(tcfg and ts_code)
+                if "mock" in str(csv_path).lower():
+                    issues.append(f"{name}: 缺少mock文件 {csv_path}")
+                elif can_auto_tushare:
+                    if not os.environ.get(token_env):
+                        issues.append(f"{name}: 缺少本地CSV，可尝试Tushare生成缓存，但未设置 {token_env}。")
+                    else:
+                        warnings.append(f"{name}: 缺少本地CSV，将尝试通过Tushare生成缓存。")
+                else:
+                    issues.append(f"{name}: 缺少本地CSV文件 {csv_path}")
+                continue
+
+            date_issues = _csv_datetime_issues(csv_path, item)
+            for issue in date_issues:
+                issues.append(f"{name}: {issue}")
+
+        elif source == "excel":
+            excel_path = _resolve_project_path(item.get("excel") or item.get("csv"))
+            if not excel_path or not excel_path.exists():
+                issues.append(f"{name}: 缺少Excel文件 {excel_path}")
+
+        elif source == "tushare":
+            cache_path = _resolve_project_path(item.get("cache_csv"))
+            refresh = bool(item.get("refresh", False))
+            if cache_path and cache_path.exists() and not refresh:
+                continue
+            if not os.environ.get(token_env):
+                issues.append(f"{name}: 需要设置 {token_env} 才能从Tushare拉取数据。")
+            else:
+                warnings.append(f"{name}: 将尝试从Tushare拉取数据；请确认账号有对应数据权限。")
+
+        elif source == "postgres":
+            # PostgreSQL templates can be run from the UI because SSH password can be entered there.
+            continue
+
+        else:
+            issues.append(f"{name}: 暂不支持的数据源 source={source}。")
+
+    if issues:
+        first = "需修复日期格式"
+        text = " ".join(issues)
+        if "Tushare" in text or "TUSHARE" in text:
+            first = "需要TUSHARE_TOKEN"
+        if "缺少mock" in text:
+            first = "缺少mock文件"
+        elif "缺少本地CSV" in text or "缺少CSV" in text:
+            first = "缺少本地CSV"
+        elif "日期" in text or "datetime" in text:
+            first = "需修复日期格式"
+        elif "暂不支持" in text:
+            first = "需高级模式"
+        return first, issues, False
+
+    if warnings:
+        return "可尝试", warnings, True
+
+    return "可运行", [], True
+
+
+def _friendly_exception_message(detail: str) -> str:
+    text = str(detail or "")
+
+    if "datetime 解析失败" in text:
+        return "日期解析失败：请检查所选 YAML 的日期列映射 schema.datetime 和 datetime_format，或换用已标记为“可运行”的模板。"
+    if "找不到数据文件" in text:
+        return "缺少本地数据文件：该模板依赖本机CSV/mock文件。请补齐文件，或换用数据库/Tushare模板。"
+    if "无法自动从Tushare生成缓存" in text:
+        return "无法自动从Tushare生成缓存：请检查 TUSHARE_TOKEN、ts_code、数据权限和网络连接。"
+    if "TUSHARE_TOKEN" in text or "token" in text.lower():
+        return "Tushare配置不完整：请先设置 TUSHARE_TOKEN，并确认账号具备对应数据权限。"
+    if "未找到数据" in text:
+        return "数据库中没有查到符合条件的数据：请检查品种代码、开始/结束日期、表名和数据源。"
+    if "No module named" in text:
+        return "运行环境缺少依赖模块：请确认已在正确项目目录启动，并安装所需依赖。"
+    if "unexpected keyword argument" in text:
+        return "策略参数不匹配：该策略暂未适配普通版参数面板，请使用原始YAML或高级界面调整参数。"
+
+    return "回测失败。请查看日志页中的技术细节。"
+
+
+def _write_runtime_cfg(cfg: Dict[str, Any]) -> Path:
+    """Write runtime config under app/configs so engines infer project_root correctly."""
+    path = configs_root() / "__simple_runtime.yaml"
+    path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def _load_yaml_presets() -> Dict[str, Dict[str, Any]]:
     presets: Dict[str, Dict[str, Any]] = {}
     root = configs_root()
@@ -160,7 +378,22 @@ def _load_yaml_presets() -> Dict[str, Dict[str, Any]]:
     for path in sorted(root.glob("*.yaml"), key=lambda p: p.name.lower()):
         try:
             cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:
+        except Exception as exc:
+            label = f"不可读取：{path.name}"
+            presets[label] = {
+                "preset_type": "yaml_template",
+                "template_path": str(path),
+                "code": "BTCUSDT",
+                "period": "1分钟",
+                "start": "2026-04-10",
+                "end": "2026-04-10",
+                "strategy_name": "cta_trend",
+                "base_cfg": {},
+                "status": "不可读取",
+                "can_run": False,
+                "issues": [f"YAML读取失败：{exc}"],
+                "hint": f"YAML读取失败：{exc}",
+            }
             continue
 
         data_items = cfg.get("data", []) or []
@@ -171,7 +404,15 @@ def _load_yaml_presets() -> Dict[str, Dict[str, Any]]:
         table_name = str(first.get("table_name") or "").strip().lower()
         code = str(first.get("code") or first.get("ts_code") or first.get("symbol") or first.get("name") or "BTCUSDT")
 
-        presets[f"模板：{path.name}"] = {
+        status, issues, can_run = _template_precheck(cfg)
+        label = f"{status}：{path.name}"
+        hint_parts = [f"模板文件：{path.name}", f"状态：{status}"]
+        if issues:
+            hint_parts.append("检查结果：" + "；".join(issues[:3]))
+        else:
+            hint_parts.append("检查结果：未发现阻断性问题。")
+
+        presets[label] = {
             "preset_type": "yaml_template",
             "template_path": str(path),
             "source": source,
@@ -182,11 +423,13 @@ def _load_yaml_presets() -> Dict[str, Dict[str, Any]]:
             "end": _date_only(first.get("end") or first.get("end_date")),
             "strategy_name": str(strategy.get("name") or "cta_trend"),
             "base_cfg": cfg,
-            "hint": f"从配置文件 {path.name} 自动加载。普通界面会覆盖品种、周期、日期、资金和风险；其他数据源细节尽量保留。",
+            "status": status,
+            "can_run": can_run,
+            "issues": issues,
+            "hint": "\n".join(hint_parts),
         }
 
     return presets
-
 
 def _load_strategy_labels() -> Dict[str, str]:
     try:
@@ -454,7 +697,7 @@ def _drawdown_points(rows: List[Dict[str, Any]]) -> List[Dict[str, float]]:
 if QT_AVAILABLE:
     class SimpleBacktestWorker(QThread):
         completed = Signal(dict)
-        failed = Signal(str)
+        failed = Signal(dict)
         status = Signal(str)
 
         def __init__(self, cfg: Dict[str, Any], runs_root: Path, parent=None):
@@ -464,11 +707,11 @@ if QT_AVAILABLE:
 
         def run(self) -> None:
             try:
-                from my_bt_lab.app.desktop_support import collect_result_metrics, write_temp_cfg
+                from my_bt_lab.app.desktop_support import collect_result_metrics
                 from my_bt_lab.engines.factory import run as run_engine
                 from my_bt_lab.reporting.writer import prepare_run_dir, write_result
 
-                cfg_path = write_temp_cfg(self.cfg)
+                cfg_path = _write_runtime_cfg(self.cfg)
                 run_dir = prepare_run_dir(self.runs_root, tag=self.cfg.get("output", {}).get("tag") or "simple")
                 log_path = run_dir / "run.log"
 
@@ -495,7 +738,8 @@ if QT_AVAILABLE:
                 }
                 self.completed.emit(payload)
             except Exception:
-                self.failed.emit(traceback.format_exc())
+                detail = traceback.format_exc()
+                self.failed.emit({"message": _friendly_exception_message(detail), "detail": detail})
 
 
     class SimpleDesktopWindow(QMainWindow):
@@ -508,7 +752,14 @@ if QT_AVAILABLE:
             self.worker: Optional[SimpleBacktestWorker] = None
             self.current_run_dir: Optional[Path] = None
 
-            self.data_presets = {**FALLBACK_DATA_PRESETS, **_load_yaml_presets()}
+            self.data_presets = {}
+            for label, preset in FALLBACK_DATA_PRESETS.items():
+                item = dict(preset)
+                item.setdefault("status", "可运行")
+                item.setdefault("can_run", True)
+                item.setdefault("issues", [])
+                self.data_presets[f"可运行：{label}"] = item
+            self.data_presets.update(_load_yaml_presets())
             self.strategy_presets = _load_strategy_labels()
 
             self._build_ui()
@@ -973,9 +1224,17 @@ if QT_AVAILABLE:
                 return "开始日期不能晚于结束日期。"
 
             preset = self.data_presets.get(self.preset_combo.currentText()) or {}
+            base_cfg = preset.get("base_cfg") if isinstance(preset.get("base_cfg"), dict) else None
+
+            # Re-run template precheck at click time so newly-set environment variables are respected.
+            if base_cfg:
+                status, issues, can_run = _template_precheck(base_cfg)
+                if not can_run:
+                    return "当前模板暂不能直接运行：\n" + "\n".join(f"- {issue}" for issue in issues[:6])
+
             needs_ssh = preset.get("preset_type") == "db_tick"
-            if not needs_ssh and isinstance(preset.get("base_cfg"), dict):
-                pg_cfg = preset["base_cfg"].get("postgres", {}) or {}
+            if not needs_ssh and isinstance(base_cfg, dict):
+                pg_cfg = base_cfg.get("postgres", {}) or {}
                 needs_ssh = bool((pg_cfg.get("ssh", {}) or {}).get("enabled"))
 
             if needs_ssh and not self.ssh_password_edit.text().strip() and not os.environ.get("SSH_PASSWORD"):
@@ -1040,13 +1299,16 @@ if QT_AVAILABLE:
             self.log_view.setPlainText(str(payload.get("log_tail") or ""))
             self.tabs.setCurrentWidget(self.summary_table)
 
-        def _on_failed(self, detail: str) -> None:
+        def _on_failed(self, payload: Dict[str, str]) -> None:
             self.run_btn.setEnabled(True)
             self.open_dir_btn.setEnabled(False)
             self.status_label.setText("状态：失败")
-            self.log_view.setPlainText(detail)
+
+            message = str((payload or {}).get("message") or "回测失败。")
+            detail = str((payload or {}).get("detail") or "")
+            self.log_view.setPlainText(f"{message}\n\n技术细节：\n{detail}")
             self.tabs.setCurrentWidget(self.log_view)
-            QMessageBox.critical(self, "回测失败", "回测失败。请查看日志页。")
+            QMessageBox.critical(self, "回测失败", message)
 
         def open_run_dir(self) -> None:
             if not self.current_run_dir or not self.current_run_dir.exists():
