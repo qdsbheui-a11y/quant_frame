@@ -225,7 +225,9 @@ def run_backtest(cfg: Dict[str, Any], cfg_path: Path) -> BacktestResult:
     cerebro = build_cerebro(cfg=cfg, project_root=project_root)
 
     start_value = float(cerebro.broker.getvalue())
-    results = cerebro.run()
+    # Enable Backtrader Trade.history so analyzers can extract entry side,
+    # entry/exit timestamps, and prices more reliably.
+    results = cerebro.run(tradehistory=True)
     strat = results[0]
     end_value = float(cerebro.broker.getvalue())
 
