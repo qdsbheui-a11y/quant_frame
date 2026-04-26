@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 try:
     from PySide6.QtCore import QThread, Qt, Signal
+    from PySide6.QtGui import QColor
     from PySide6.QtWidgets import (
         QApplication,
         QComboBox,
@@ -31,10 +32,16 @@ try:
         QVBoxLayout,
         QWidget,
     )
+    try:
+        from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
+        QT_CHARTS_AVAILABLE = True
+    except Exception:
+        QT_CHARTS_AVAILABLE = False
     QT_AVAILABLE = True
     QT_IMPORT_ERROR: Optional[Exception] = None
 except Exception as exc:  # pragma: no cover
     QT_AVAILABLE = False
+    QT_CHARTS_AVAILABLE = False
     QT_IMPORT_ERROR = exc
 
 
@@ -77,11 +84,16 @@ def _safe_read_text_tail(path: Path, lines: int = 200) -> str:
 def _metric_rows(result) -> List[Dict[str, Any]]:
     trade_stats = getattr(result, "trade_stats", {}) or {}
     drawdown = getattr(result, "drawdown", {}) or {}
+    start_value = float(getattr(result, "start_value", 0.0) or 0.0)
+    end_value = float(getattr(result, "end_value", 0.0) or 0.0)
+    net_pnl = float(trade_stats.get("net_pnl", end_value - start_value) or 0.0)
+    ret = (end_value / start_value - 1.0) if start_value else 0.0
     return [
-        {"指标": "初始资金", "数值": f"{float(getattr(result, 'start_value', 0.0) or 0.0):,.2f}"},
-        {"指标": "结束资金", "数值": f"{float(getattr(result, 'end_value', 0.0) or 0.0):,.2f}"},
-        {"指标": "净利润", "数值": f"{float(trade_stats.get('net_pnl', 0.0) or 0.0):,.2f}"},
-        {"指标": "已平仓交易", "数值": str(int(trade_stats.get('closed_trades', 0) or 0))},
+        {"指标": "初始资金", "数值": f"{start_value:,.2f}"},
+        {"指标": "结束资金", "数值": f"{end_value:,.2f}"},
+        {"指标": "净利润", "数值": f"{net_pnl:,.2f}"},
+        {"指标": "收益率", "数值": f"{ret:.4%}"},
+        {"指标": "已平仓交易", "数值": str(int(trade_stats.get("closed_trades", 0) or 0))},
         {"指标": "最大回撤", "数值": f"{float(drawdown.get('max_drawdown_pct', 0.0) or 0.0):.4f}%"},
     ]
 
@@ -180,6 +192,35 @@ def _build_btcusdt_tick_config(
     }
 
 
+def _chart_points_from_equity(rows: List[Dict[str, Any]], key: str) -> List[Dict[str, float]]:
+    points: List[Dict[str, float]] = []
+    for idx, row in enumerate(rows or []):
+        value = row.get(key)
+        if value is None and key == "value":
+            value = row.get("dynamic_equity")
+        try:
+            points.append({"x": float(idx), "y": float(value or 0.0)})
+        except Exception:
+            continue
+    return points
+
+
+def _drawdown_points(rows: List[Dict[str, Any]]) -> List[Dict[str, float]]:
+    points: List[Dict[str, float]] = []
+    peak: Optional[float] = None
+    for idx, row in enumerate(rows or []):
+        value = row.get("value", row.get("dynamic_equity"))
+        try:
+            equity = float(value or 0.0)
+        except Exception:
+            continue
+        if peak is None or equity > peak:
+            peak = equity
+        dd = 0.0 if not peak else (equity / peak - 1.0) * 100.0
+        points.append({"x": float(idx), "y": dd})
+    return points
+
+
 if QT_AVAILABLE:
     class SimpleBacktestWorker(QThread):
         completed = Signal(dict)
@@ -228,7 +269,7 @@ if QT_AVAILABLE:
         def __init__(self):
             super().__init__()
             self.setWindowTitle(APP_TITLE)
-            self.resize(1180, 760)
+            self.resize(1220, 800)
             self.runs_root = project_root() / "runs"
             self.worker: Optional[SimpleBacktestWorker] = None
             self.current_run_dir: Optional[Path] = None
@@ -245,6 +286,9 @@ if QT_AVAILABLE:
                 QLineEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit, QTableWidget {
                     background-color: #0F172A; color: #E5E7EB; border: 1px solid #334155; border-radius: 5px; padding: 4px;
                 }
+                QTableWidget::item { background-color: #0F172A; color: #E5E7EB; }
+                QTableWidget::item:alternate { background-color: #172033; color: #E5E7EB; }
+                QTableWidget::item:selected { background-color: #0E7490; color: #FFFFFF; }
                 QPushButton { background-color: #1D4ED8; color: white; border: none; border-radius: 6px; padding: 8px 14px; font-weight: 600; }
                 QPushButton:hover { background-color: #2563EB; }
                 QPushButton:disabled { background-color: #475569; color: #CBD5E1; }
@@ -252,6 +296,7 @@ if QT_AVAILABLE:
                 QLabel#title { font-size: 24px; font-weight: 700; color: #F8FAFC; }
                 QLabel#hint { color: #94A3B8; }
                 QLabel#status { color: #93C5FD; font-weight: 600; padding: 6px 0; }
+                QLabel#chartFallback { background-color: #0F172A; color: #94A3B8; border: 1px solid #334155; padding: 12px; }
                 """
             )
 
@@ -367,7 +412,9 @@ if QT_AVAILABLE:
             self.log_view = QPlainTextEdit()
             self.log_view.setReadOnly(True)
             self.log_view.setPlaceholderText("运行日志会显示在这里。")
+            self.chart_tab = self._build_chart_tab()
             self.tabs.addTab(self.summary_table, "摘要")
+            self.tabs.addTab(self.chart_tab, "图表")
             self.tabs.addTab(self.trades_table, "交易")
             self.tabs.addTab(self.orders_table, "委托")
             self.tabs.addTab(self.fills_table, "成交")
@@ -375,9 +422,32 @@ if QT_AVAILABLE:
             layout.addWidget(self.tabs)
             return panel
 
+        def _build_chart_tab(self) -> QWidget:
+            wrapper = QWidget()
+            layout = QVBoxLayout(wrapper)
+            if QT_CHARTS_AVAILABLE:
+                self.equity_chart = QChartView()
+                self.drawdown_chart = QChartView()
+                self.equity_chart.setMinimumHeight(260)
+                self.drawdown_chart.setMinimumHeight(260)
+                layout.addWidget(self.equity_chart)
+                layout.addWidget(self.drawdown_chart)
+            else:
+                self.chart_fallback = QLabel("当前环境未启用 QtCharts。可在结果目录查看 CSV/HTML 报告。")
+                self.chart_fallback.setObjectName("chartFallback")
+                self.chart_fallback.setAlignment(Qt.AlignCenter)
+                layout.addWidget(self.chart_fallback)
+            return wrapper
+
         def _make_table(self) -> QTableWidget:
             table = QTableWidget()
             table.setAlternatingRowColors(True)
+            table.setStyleSheet(
+                "QTableWidget { background-color: #0F172A; alternate-background-color: #172033; gridline-color: #334155; }"
+                "QTableWidget::item { background-color: #0F172A; color: #E5E7EB; }"
+                "QTableWidget::item:alternate { background-color: #172033; color: #E5E7EB; }"
+                "QTableWidget::item:selected { background-color: #0E7490; color: #FFFFFF; }"
+            )
             return table
 
         def _set_table_rows(self, table: QTableWidget, rows: List[Dict[str, Any]]) -> None:
@@ -391,10 +461,56 @@ if QT_AVAILABLE:
             table.setRowCount(len(rows))
             table.setColumnCount(len(columns))
             table.setHorizontalHeaderLabels(columns)
+            bg = QColor("#0F172A")
+            alt_bg = QColor("#172033")
+            fg = QColor("#E5E7EB")
             for r, row in enumerate(rows):
                 for c, col in enumerate(columns):
-                    table.setItem(r, c, QTableWidgetItem(str(row.get(col, ""))))
+                    item = QTableWidgetItem(str(row.get(col, "")))
+                    item.setBackground(alt_bg if r % 2 else bg)
+                    item.setForeground(fg)
+                    table.setItem(r, c, item)
             table.resizeColumnsToContents()
+
+        def _set_line_chart(self, chart_view, title: str, points: List[Dict[str, float]], y_title: str) -> None:
+            if not QT_CHARTS_AVAILABLE or chart_view is None:
+                return
+            chart = QChart()
+            chart.setTitle(title)
+            series = QLineSeries()
+            for point in points:
+                series.append(float(point.get("x", 0.0)), float(point.get("y", 0.0)))
+            chart.addSeries(series)
+            axis_x = QValueAxis()
+            axis_x.setTitleText("bar index")
+            axis_x.setLabelFormat("%.0f")
+            axis_y = QValueAxis()
+            axis_y.setTitleText(y_title)
+            chart.addAxis(axis_x, Qt.AlignBottom)
+            chart.addAxis(axis_y, Qt.AlignLeft)
+            series.attachAxis(axis_x)
+            series.attachAxis(axis_y)
+            if points:
+                xs = [p["x"] for p in points]
+                ys = [p["y"] for p in points]
+                axis_x.setRange(min(xs), max(xs) if max(xs) > min(xs) else min(xs) + 1)
+                y_min, y_max = min(ys), max(ys)
+                if y_min == y_max:
+                    pad = abs(y_min) * 0.01 or 1.0
+                    y_min -= pad
+                    y_max += pad
+                axis_y.setRange(y_min, y_max)
+            chart.legend().hide()
+            chart_view.setChart(chart)
+
+        def _update_charts(self, payload: Dict[str, Any]) -> None:
+            if not QT_CHARTS_AVAILABLE:
+                return
+            equity_rows = payload.get("equity_curve", []) or []
+            equity_points = _chart_points_from_equity(equity_rows, "value")
+            drawdown_points = _drawdown_points(equity_rows)
+            self._set_line_chart(self.equity_chart, "资金曲线", equity_points, "equity")
+            self._set_line_chart(self.drawdown_chart, "回撤曲线", drawdown_points, "drawdown %")
 
         def _on_risk_preset_changed(self, text: str) -> None:
             value = RISK_PRESETS.get(text)
@@ -457,6 +573,7 @@ if QT_AVAILABLE:
             self._set_table_rows(self.trades_table, payload.get("trades", []))
             self._set_table_rows(self.orders_table, payload.get("orders", []))
             self._set_table_rows(self.fills_table, payload.get("fills", []))
+            self._update_charts(payload)
             self.log_view.setPlainText(str(payload.get("log_tail") or ""))
             self.tabs.setCurrentWidget(self.summary_table)
 
