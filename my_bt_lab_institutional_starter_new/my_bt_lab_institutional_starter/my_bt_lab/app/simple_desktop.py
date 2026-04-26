@@ -50,34 +50,21 @@ except Exception as exc:  # pragma: no cover
     QT_IMPORT_ERROR = exc
 
 
-APP_TITLE = "量化回测助手 - 普通用户版"
+APP_TITLE = "量化回测助手 - DB Tick 普通版"
 
 
-FALLBACK_DATA_PRESETS: Dict[str, Dict[str, Any]] = {
-    "BTCUSDT tick 数据库回测 - 1分钟K": {
+DATA_PRESETS: Dict[str, Dict[str, Any]] = {
+    "数据库 tick 回测（所有策略统一使用）": {
         "preset_type": "db_tick",
         "code": "BTCUSDT",
         "period": "1分钟",
         "start": "2026-04-10",
         "end": "2026-04-10",
-        "hint": "读取数据库 tick_data，并在数据库端聚合为 1分钟K。",
-    },
-    "BTCUSDT tick 数据库回测 - 5分钟K": {
-        "preset_type": "db_tick",
-        "code": "BTCUSDT",
-        "period": "5分钟",
-        "start": "2026-04-10",
-        "end": "2026-04-10",
-        "hint": "读取数据库 tick_data，并在数据库端聚合为 5分钟K。",
-    },
-    "自定义数据库 tick 回测": {
-        "preset_type": "db_tick",
-        "code": "BTCUSDT",
-        "period": "1分钟",
-        "start": "2026-04-10",
-        "end": "2026-04-10",
-        "hint": "自定义品种代码和日期；底层使用 PostgreSQL tick_data 预设。",
-    },
+        "hint": (
+            "普通版固定使用 PostgreSQL public.tick_data 数据源。"
+            "无论选择哪个策略，都会先从数据库读取 tick，再按所选周期聚合成K线后回测。"
+        ),
+    }
 }
 
 
@@ -101,7 +88,7 @@ PERIOD_PRESETS: Dict[str, Tuple[str, int]] = {
 
 STRATEGY_LABELS = {
     "cta_trend": "CTA 趋势策略（均线 + ATR）",
-    "donchian_daily_mtf": "Donchian 突破策略（高级）",
+    "donchian_daily_mtf": "Donchian 突破策略（DB tick + 日线信号）",
 }
 
 
@@ -134,302 +121,6 @@ def _safe_read_text_tail(path: Path, lines: int = 200) -> str:
 def _set_date(widget: QDateEdit, value: Any) -> None:
     widget.setDate(datetime.strptime(_date_only(value), "%Y-%m-%d").date())
 
-
-def _period_label(timeframe: Any, compression: Any) -> str:
-    tf = str(timeframe or "minutes").strip().lower()
-    try:
-        comp = int(compression or 1)
-    except Exception:
-        comp = 1
-
-    if tf in {"minutes", "minute", "min", "m"}:
-        if comp == 1:
-            return "1分钟"
-        label = f"{comp}分钟"
-        return label if label in PERIOD_PRESETS else "1分钟"
-
-    return "1分钟"
-
-
-def _norm_source(source: Any) -> str:
-    text = str(source or "csv").strip().lower()
-    if text in {"db", "postgresql"}:
-        return "postgres"
-    if text in {"xlsx", "xls"}:
-        return "excel"
-    return text or "csv"
-
-
-def _resolve_project_path(path_value: Any) -> Optional[Path]:
-    raw = str(path_value or "").strip()
-    if not raw:
-        return None
-    path = Path(raw).expanduser()
-    if path.is_absolute():
-        return path
-    return (project_root() / path).resolve()
-
-
-def _infer_ts_code_from_path(path_value: Any) -> Optional[str]:
-    import re
-
-    stem = Path(str(path_value or "")).stem
-    match = re.search(r"(\d{6})[_-]([A-Za-z]{2})", stem)
-    if match:
-        return f"{match.group(1)}.{match.group(2).upper()}"
-    return None
-
-
-def _csv_datetime_issues(csv_path: Path, item: Dict[str, Any]) -> List[str]:
-    """Lightweight CSV schema/date-format check for the template dropdown.
-
-    This intentionally reads only a small sample. It is not a full data load.
-    """
-    if not csv_path.exists():
-        return []
-
-    try:
-        import pandas as pd
-    except Exception:
-        return []
-
-    read_kwargs: Dict[str, Any] = {
-        "sep": item.get("sep", ","),
-        "encoding": item.get("encoding", "utf-8"),
-        "nrows": 200,
-    }
-    if item.get("header_row") is not None:
-        read_kwargs["header"] = item.get("header_row")
-    if item.get("skiprows") is not None:
-        read_kwargs["skiprows"] = item.get("skiprows")
-
-    try:
-        sample = pd.read_csv(csv_path, **read_kwargs)
-    except Exception as exc:
-        return [f"CSV读取失败：{exc}"]
-
-    if sample.empty:
-        return ["CSV文件为空或前200行无有效数据。"]
-
-    sample.columns = [str(col).strip().lower() for col in sample.columns]
-    columns = set(sample.columns)
-
-    schema = item.get("schema") if isinstance(item.get("schema"), dict) else {}
-    dt_col = (
-        item.get("datetime_col")
-        or schema.get("datetime")
-        or item.get("date_col")
-        or None
-    )
-    if dt_col:
-        dt_col = str(dt_col).strip().lower()
-    else:
-        for candidate in ["datetime", "date", "trade_date", "trade_time", "time", "timestamp", "dt"]:
-            if candidate in columns:
-                dt_col = candidate
-                break
-
-    if not dt_col:
-        return [f"找不到日期列。当前列={list(sample.columns)}。"]
-
-    if dt_col not in columns:
-        return [f"日期列配置为 {dt_col}，但CSV中不存在。当前列={list(sample.columns)}。"]
-
-    datetime_format = item.get("datetime_format")
-    raw_values = sample[dt_col].dropna().astype(str).str.strip()
-    if raw_values.empty:
-        return [f"日期列 {dt_col} 为空。"]
-
-    try:
-        if datetime_format:
-            parsed = pd.to_datetime(raw_values, format=str(datetime_format), errors="coerce")
-        else:
-            parsed = pd.to_datetime(raw_values, errors="coerce")
-    except Exception as exc:
-        return [f"日期格式解析异常：{exc}"]
-
-    bad_count = int(parsed.isna().sum())
-    if bad_count == len(parsed):
-        fmt = f"，datetime_format={datetime_format}" if datetime_format else ""
-        return [f"日期解析全部失败：列={dt_col}{fmt}。请检查 YAML 的 schema/datetime_format。"]
-
-    return []
-
-
-def _template_precheck(cfg: Dict[str, Any]) -> Tuple[str, List[str], bool]:
-    """Return (status, issues, can_run) for one YAML template.
-
-    Status is meant to be shown directly in the dropdown.
-    """
-    data_items = cfg.get("data", []) or []
-    if not data_items:
-        return "不可运行", ["模板没有 data 配置。"], False
-
-    issues: List[str] = []
-    warnings: List[str] = []
-    tcfg = cfg.get("tushare", {}) or {}
-    token_env = str(tcfg.get("token_env") or "TUSHARE_TOKEN")
-
-    for item in data_items:
-        source = _norm_source(item.get("source"))
-        name = str(item.get("name") or item.get("symbol") or item.get("code") or item.get("ts_code") or "数据源")
-
-        if source == "csv":
-            csv_path = _resolve_project_path(item.get("csv") or item.get("cache_csv"))
-            if not csv_path:
-                issues.append(f"{name}: 未配置CSV文件路径。")
-                continue
-
-            if not csv_path.exists():
-                ts_code = item.get("ts_code") or _infer_ts_code_from_path(csv_path)
-                can_auto_tushare = bool(tcfg and ts_code)
-                if "mock" in str(csv_path).lower():
-                    issues.append(f"{name}: 缺少mock文件 {csv_path}")
-                elif can_auto_tushare:
-                    if not os.environ.get(token_env):
-                        issues.append(f"{name}: 缺少本地CSV，可尝试Tushare生成缓存，但未设置 {token_env}。")
-                    else:
-                        warnings.append(f"{name}: 缺少本地CSV，将尝试通过Tushare生成缓存。")
-                else:
-                    issues.append(f"{name}: 缺少本地CSV文件 {csv_path}")
-                continue
-
-            date_issues = _csv_datetime_issues(csv_path, item)
-            for issue in date_issues:
-                issues.append(f"{name}: {issue}")
-
-        elif source == "excel":
-            excel_path = _resolve_project_path(item.get("excel") or item.get("csv"))
-            if not excel_path or not excel_path.exists():
-                issues.append(f"{name}: 缺少Excel文件 {excel_path}")
-
-        elif source == "tushare":
-            cache_path = _resolve_project_path(item.get("cache_csv"))
-            refresh = bool(item.get("refresh", False))
-            if cache_path and cache_path.exists() and not refresh:
-                continue
-            if not os.environ.get(token_env):
-                issues.append(f"{name}: 需要设置 {token_env} 才能从Tushare拉取数据。")
-            else:
-                warnings.append(f"{name}: 将尝试从Tushare拉取数据；请确认账号有对应数据权限。")
-
-        elif source == "postgres":
-            # PostgreSQL templates can be run from the UI because SSH password can be entered there.
-            continue
-
-        else:
-            issues.append(f"{name}: 暂不支持的数据源 source={source}。")
-
-    if issues:
-        first = "需修复日期格式"
-        text = " ".join(issues)
-        if "Tushare" in text or "TUSHARE" in text:
-            first = "需要TUSHARE_TOKEN"
-        if "缺少mock" in text:
-            first = "缺少mock文件"
-        elif "缺少本地CSV" in text or "缺少CSV" in text:
-            first = "缺少本地CSV"
-        elif "日期" in text or "datetime" in text:
-            first = "需修复日期格式"
-        elif "暂不支持" in text:
-            first = "需高级模式"
-        return first, issues, False
-
-    if warnings:
-        return "可尝试", warnings, True
-
-    return "可运行", [], True
-
-
-def _friendly_exception_message(detail: str) -> str:
-    text = str(detail or "")
-
-    if "datetime 解析失败" in text:
-        return "日期解析失败：请检查所选 YAML 的日期列映射 schema.datetime 和 datetime_format，或换用已标记为“可运行”的模板。"
-    if "找不到数据文件" in text:
-        return "缺少本地数据文件：该模板依赖本机CSV/mock文件。请补齐文件，或换用数据库/Tushare模板。"
-    if "无法自动从Tushare生成缓存" in text:
-        return "无法自动从Tushare生成缓存：请检查 TUSHARE_TOKEN、ts_code、数据权限和网络连接。"
-    if "TUSHARE_TOKEN" in text or "token" in text.lower():
-        return "Tushare配置不完整：请先设置 TUSHARE_TOKEN，并确认账号具备对应数据权限。"
-    if "未找到数据" in text:
-        return "数据库中没有查到符合条件的数据：请检查品种代码、开始/结束日期、表名和数据源。"
-    if "No module named" in text:
-        return "运行环境缺少依赖模块：请确认已在正确项目目录启动，并安装所需依赖。"
-    if "unexpected keyword argument" in text:
-        return "策略参数不匹配：该策略暂未适配普通版参数面板，请使用原始YAML或高级界面调整参数。"
-
-    return "回测失败。请查看日志页中的技术细节。"
-
-
-def _write_runtime_cfg(cfg: Dict[str, Any]) -> Path:
-    """Write runtime config under app/configs so engines infer project_root correctly."""
-    path = configs_root() / "__simple_runtime.yaml"
-    path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return path
-
-
-def _load_yaml_presets() -> Dict[str, Dict[str, Any]]:
-    presets: Dict[str, Dict[str, Any]] = {}
-    root = configs_root()
-    if not root.exists():
-        return presets
-
-    for path in sorted(root.glob("*.yaml"), key=lambda p: p.name.lower()):
-        try:
-            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception as exc:
-            label = f"不可读取：{path.name}"
-            presets[label] = {
-                "preset_type": "yaml_template",
-                "template_path": str(path),
-                "code": "BTCUSDT",
-                "period": "1分钟",
-                "start": "2026-04-10",
-                "end": "2026-04-10",
-                "strategy_name": "cta_trend",
-                "base_cfg": {},
-                "status": "不可读取",
-                "can_run": False,
-                "issues": [f"YAML读取失败：{exc}"],
-                "hint": f"YAML读取失败：{exc}",
-            }
-            continue
-
-        data_items = cfg.get("data", []) or []
-        first = data_items[0] if data_items else {}
-        strategy = cfg.get("strategy", {}) or {}
-
-        source = str(first.get("source") or "").strip().lower()
-        table_name = str(first.get("table_name") or "").strip().lower()
-        code = str(first.get("code") or first.get("ts_code") or first.get("symbol") or first.get("name") or "BTCUSDT")
-
-        status, issues, can_run = _template_precheck(cfg)
-        label = f"{status}：{path.name}"
-        hint_parts = [f"模板文件：{path.name}", f"状态：{status}"]
-        if issues:
-            hint_parts.append("检查结果：" + "；".join(issues[:3]))
-        else:
-            hint_parts.append("检查结果：未发现阻断性问题。")
-
-        presets[label] = {
-            "preset_type": "yaml_template",
-            "template_path": str(path),
-            "source": source,
-            "table_name": table_name,
-            "code": code,
-            "period": _period_label(first.get("timeframe"), first.get("compression", 1)),
-            "start": _date_only(first.get("start") or first.get("start_date")),
-            "end": _date_only(first.get("end") or first.get("end_date")),
-            "strategy_name": str(strategy.get("name") or "cta_trend"),
-            "base_cfg": cfg,
-            "status": status,
-            "can_run": can_run,
-            "issues": issues,
-            "hint": "\n".join(hint_parts),
-        }
-
-    return presets
 
 def _load_strategy_labels() -> Dict[str, str]:
     try:
@@ -468,38 +159,37 @@ def _strategy_params(
     strategy_name: str,
     initial_cash: float,
     risk_per_trade: float,
-    base_params: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    params = dict(base_params or {})
-
     if strategy_name == "donchian_daily_mtf":
-        params.setdefault("entry_lookback_days", 20)
-        params.setdefault("exit_lookback_days", 10)
-        params.setdefault("breakout_add_ticks", 1)
-        params.setdefault("entry_mode", "range")
-        params.setdefault("atr_period", 20)
-        params.setdefault("atr_mult", 2.0)
-        params.setdefault("trail_lv1_atr", 2.0)
-        params.setdefault("trail_lv2_atr", 5.0)
-        params.setdefault("trail_lock_atr", 2.0)
-        params["risk_cash"] = float(initial_cash) * float(risk_per_trade)
-        params.setdefault("max_positions", 99)
-        params.setdefault("min_size", 1)
-        return params
+        return {
+            "entry_lookback_days": 20,
+            "exit_lookback_days": 10,
+            "breakout_add_ticks": 1,
+            "entry_mode": "range",
+            "atr_period": 20,
+            "atr_mult": 2.0,
+            "trail_lv1_atr": 2.0,
+            "trail_lv2_atr": 5.0,
+            "trail_lock_atr": 2.0,
+            "risk_cash": float(initial_cash) * float(risk_per_trade),
+            "max_positions": 99,
+            "min_size": 1,
+        }
 
     if strategy_name == "cta_trend":
-        params.setdefault("fast", 10)
-        params.setdefault("slow", 30)
-        params.setdefault("atr_period", 14)
-        params.setdefault("atr_stop_mult", 2.0)
-        params["risk_per_trade"] = risk_per_trade
-        params.setdefault("max_positions", 2)
-        params.setdefault("min_size", 1)
-        return params
+        return {
+            "fast": 10,
+            "slow": 30,
+            "atr_period": 14,
+            "atr_stop_mult": 2.0,
+            "risk_per_trade": risk_per_trade,
+            "max_positions": 2,
+            "min_size": 1,
+        }
 
-    # 对未知策略不要乱塞 fast/slow/risk_per_trade，避免 unexpected keyword argument。
-    # 如果 YAML 模板里带了该策略的 params，就保留；否则让策略使用自身默认参数。
-    return params
+    # 未知策略不强塞参数，避免 unexpected keyword argument。
+    # 策略会使用自身 params 默认值。
+    return {}
 
 
 def _default_postgres_cfg() -> Dict[str, Any]:
@@ -524,11 +214,23 @@ def _default_postgres_cfg() -> Dict[str, Any]:
     }
 
 
+def _symbol_spec(code: str) -> Dict[str, Any]:
+    # BTC/ETH 默认按币本位现货式回测参数处理；其他品种也先给通用规格。
+    return {
+        "mult": 1,
+        "commission": 0.0003,
+        "margin": 0,
+        "commtype": "perc",
+        "size_step": 1,
+        "min_size": 1,
+    }
+
+
 def _build_db_tick_data_item(code: str, start: str, end: str, timeframe: str, compression: int) -> Dict[str, Any]:
     data_name = f"{code}_tick"
     return {
         "name": data_name,
-        "symbol": data_name,
+        "symbol": code,
         "source": "postgres",
         "role": "exec",
         "code": code,
@@ -543,47 +245,6 @@ def _build_db_tick_data_item(code: str, start: str, end: str, timeframe: str, co
     }
 
 
-def _patch_data_items(
-    data_items: List[Dict[str, Any]],
-    *,
-    code: str,
-    start: str,
-    end: str,
-    timeframe: str,
-    compression: int,
-) -> List[Dict[str, Any]]:
-    patched: List[Dict[str, Any]] = []
-
-    for item in data_items or []:
-        new_item = dict(item)
-        source = str(new_item.get("source") or "").strip().lower()
-        data_type = str(new_item.get("data_type") or "").strip().lower()
-        table_name = str(new_item.get("table_name") or "").strip().lower()
-
-        if source == "postgres" and (data_type == "tick" or table_name == "tick_data"):
-            # 数据库 tick 模板按普通版输入覆盖。
-            new_item.update(_build_db_tick_data_item(code, start, end, timeframe, compression))
-        else:
-            # CSV/Tushare/普通 PG 表尽量保留原配置，只覆盖用户能理解的通用字段。
-            if "code" in new_item:
-                new_item["code"] = code
-            if "ts_code" in new_item:
-                new_item["ts_code"] = code
-            if "symbol" in new_item:
-                new_item["symbol"] = code
-            if "name" in new_item and not str(new_item.get("name") or "").strip():
-                new_item["name"] = code
-
-            new_item["start"] = start
-            new_item["end"] = end
-            new_item["timeframe"] = timeframe
-            new_item["compression"] = compression
-
-        patched.append(new_item)
-
-    return patched
-
-
 def _build_runtime_config(
     *,
     code: str,
@@ -594,70 +255,60 @@ def _build_runtime_config(
     initial_cash: float,
     risk_per_trade: float,
     strategy_name: str,
-    preset: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    preset = preset or {}
-    base_cfg = preset.get("base_cfg") if isinstance(preset.get("base_cfg"), dict) else None
-    cfg = copy.deepcopy(base_cfg or {})
+    code = str(code).strip()
+    data_name = f"{code}_tick"
 
-    preset_type = str(preset.get("preset_type") or "").strip()
-
-    if preset_type == "db_tick" or not cfg:
-        cfg.setdefault("postgres", _default_postgres_cfg())
-        cfg["data"] = [_build_db_tick_data_item(code, start, end, timeframe, compression)]
-    else:
-        # YAML 模板：保留数据源细节，只覆盖普通用户输入。
-        data_items = cfg.get("data", []) or []
-        cfg["data"] = _patch_data_items(
-            data_items,
-            code=code,
-            start=start,
-            end=end,
-            timeframe=timeframe,
-            compression=compression,
-        )
-        if "postgres" not in cfg and any((item.get("source") == "postgres") for item in cfg["data"]):
-            cfg["postgres"] = _default_postgres_cfg()
-
-    base_strategy = cfg.get("strategy", {}) or {}
-    base_params = base_strategy.get("params") if isinstance(base_strategy.get("params"), dict) else {}
-
-    cfg["strategy"] = {
-        "name": strategy_name,
-        "params": _strategy_params(strategy_name, initial_cash, risk_per_trade, base_params),
+    cfg: Dict[str, Any] = {
+        "postgres": _default_postgres_cfg(),
+        "data": [_build_db_tick_data_item(code, start, end, timeframe, compression)],
+        "strategy": {
+            "name": strategy_name,
+            "params": _strategy_params(strategy_name, initial_cash, risk_per_trade),
+        },
+        "broker": {
+            "starting_cash": float(initial_cash),
+            "account_mode": "cash",
+            "slip_perc": 0.0,
+            "coc": False,
+        },
+        "commission_default": {
+            "commission": 0.0003,
+            "mult": 1,
+            "margin": 0,
+            "commtype": "perc",
+        },
+        "symbols": {
+            code: _symbol_spec(code),
+            data_name: _symbol_spec(code),
+        },
+        "engine": {
+            "name": "backtrader",
+            "cash": float(initial_cash),
+            "commission": 0.0003,
+        },
+        "output": {
+            "tag": "simple_db_tick_backtest",
+        },
+        "report": {
+            "html": False,
+        },
     }
 
-    cfg["broker"] = {
-        **(cfg.get("broker", {}) or {}),
-        "starting_cash": float(initial_cash),
-        "account_mode": (cfg.get("broker", {}) or {}).get("account_mode", "cash"),
-    }
-
-    cfg["engine"] = {
-        **(cfg.get("engine", {}) or {}),
-        "name": "backtrader",
-        "cash": float(initial_cash),
-    }
-
-    cfg.setdefault(
-        "commission_default",
-        {"commission": 0.0003, "mult": 1, "margin": 0, "commtype": "perc"},
-    )
-
-    # 数据库 tick 场景需要 symbol_specs；其他模板保留原 symbols。
-    if preset_type == "db_tick" or not cfg.get("symbols"):
-        data_name = f"{code}_tick"
-        cfg["symbols"] = {
-            data_name: {
-                "mult": 1,
-                "commission": 0.0003,
-                "margin": 0,
-                "commtype": "perc",
+    # Donchian 是 MTF 设计：普通版仍然统一用 DB tick 数据；
+    # 但会把 DB tick 聚合后的执行K线再 resample 成日线信号源。
+    if strategy_name == "donchian_daily_mtf":
+        cfg["resample"] = [
+            {
+                "source": data_name,
+                "name": f"{code}_D_signal",
+                "symbol": code,
+                "role": "signal",
+                "timeframe": "days",
+                "compression": 1,
             }
-        }
+        ]
 
-    cfg["output"] = {"tag": "simple_db_backtest"}
-    cfg["report"] = {"html": False}
     return cfg
 
 
@@ -694,6 +345,32 @@ def _drawdown_points(rows: List[Dict[str, Any]]) -> List[Dict[str, float]]:
     return points
 
 
+def _friendly_exception_message(detail: str) -> str:
+    text = str(detail or "")
+
+    if "未找到数据" in text:
+        return "数据库中没有查到符合条件的数据：请检查交易品种、开始日期、结束日期。"
+    if "Failed to connect" in text or "Timed out" in text or "timeout" in text.lower():
+        return "数据库连接超时：请检查网络、SSH 密码和服务器状态。"
+    if "Authentication" in text or "password" in text.lower():
+        return "数据库或 SSH 认证失败：请检查 SSH 密码和数据库连接配置。"
+    if "unexpected keyword argument" in text:
+        return "策略参数不匹配：该策略暂未完全适配普通版参数面板。请先使用已验证策略，或在高级界面调参。"
+    if "No module named" in text:
+        return "运行环境缺少依赖模块：请确认在项目根目录启动，并安装所需依赖。"
+    if "IndexError" in text or "not enough" in text.lower():
+        return "数据量不足：当前日期范围太短，策略指标无法完成初始化。请扩大回测日期范围。"
+
+    return "回测失败。请查看日志页中的技术细节。"
+
+
+def _write_runtime_cfg(cfg: Dict[str, Any]) -> Path:
+    # 写到 app/configs 下，保证 backtrader_engine 能正确推断 project_root。
+    path = configs_root() / "__simple_runtime.yaml"
+    path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
 if QT_AVAILABLE:
     class SimpleBacktestWorker(QThread):
         completed = Signal(dict)
@@ -722,7 +399,7 @@ if QT_AVAILABLE:
                     force=True,
                 )
 
-                self.status.emit("正在连接数据库并运行回测...")
+                self.status.emit("正在从数据库读取 tick 并运行回测...")
                 result = run_engine(self.cfg, cfg_path)
                 write_result(run_dir, self.cfg, cfg_path, result, project_root=project_root())
 
@@ -752,14 +429,7 @@ if QT_AVAILABLE:
             self.worker: Optional[SimpleBacktestWorker] = None
             self.current_run_dir: Optional[Path] = None
 
-            self.data_presets = {}
-            for label, preset in FALLBACK_DATA_PRESETS.items():
-                item = dict(preset)
-                item.setdefault("status", "可运行")
-                item.setdefault("can_run", True)
-                item.setdefault("issues", [])
-                self.data_presets[f"可运行：{label}"] = item
-            self.data_presets.update(_load_yaml_presets())
+            self.data_presets = DATA_PRESETS
             self.strategy_presets = _load_strategy_labels()
 
             self._build_ui()
@@ -914,7 +584,7 @@ if QT_AVAILABLE:
             title = QLabel(APP_TITLE)
             title.setObjectName("title")
 
-            hint = QLabel("面向非程序员：选择品种、周期、日期、资金和风险级别即可运行回测。数据库表名、字段名和 JSON 默认隐藏。")
+            hint = QLabel("普通版固定使用数据库 tick_data：交易员只需要选择品种、周期、日期、资金、风险和策略。CSV / Tushare / YAML 数据源请在高级版使用。")
             hint.setObjectName("hint")
 
             layout.addWidget(title)
@@ -958,7 +628,7 @@ if QT_AVAILABLE:
             self.preset_hint.setObjectName("presetHint")
             self.preset_hint.setWordWrap(True)
 
-            form.addRow("数据预设", self.preset_combo)
+            form.addRow("数据源", self.preset_combo)
             form.addRow("交易品种", self.code_edit)
             form.addRow("K线周期", self.period_combo)
             form.addRow("开始日期", self.start_date)
@@ -1101,7 +771,6 @@ if QT_AVAILABLE:
         def _set_table_rows(self, table: QTableWidget, rows: List[Dict[str, Any]]) -> None:
             rows = rows or []
             columns: List[str] = []
-
             for row in rows:
                 for key in row.keys():
                     if key not in columns:
@@ -1147,14 +816,12 @@ if QT_AVAILABLE:
 
             chart.addAxis(axis_x, Qt.AlignBottom)
             chart.addAxis(axis_y, Qt.AlignLeft)
-
             series.attachAxis(axis_x)
             series.attachAxis(axis_y)
 
             if points:
                 xs = [p["x"] for p in points]
                 ys = [p["y"] for p in points]
-
                 axis_x.setRange(min(xs), max(xs) if max(xs) > min(xs) else min(xs) + 1)
 
                 y_min, y_max = min(ys), max(ys)
@@ -1162,7 +829,6 @@ if QT_AVAILABLE:
                     pad = abs(y_min) * 0.01 or 1.0
                     y_min -= pad
                     y_max += pad
-
                 axis_y.setRange(y_min, y_max)
 
             chart.legend().hide()
@@ -1185,26 +851,16 @@ if QT_AVAILABLE:
                 return
 
             self.code_edit.setText(str(preset.get("code") or "BTCUSDT"))
-
             period = str(preset.get("period") or "1分钟")
             if period in PERIOD_PRESETS:
                 self.period_combo.setCurrentText(period)
 
             _set_date(self.start_date, preset.get("start") or "2026-04-10")
             _set_date(self.end_date, preset.get("end") or "2026-04-10")
-
-            strategy_name = str(preset.get("strategy_name") or "")
-            if strategy_name:
-                for label, value in self.strategy_presets.items():
-                    if value == strategy_name:
-                        self.strategy_combo.setCurrentText(label)
-                        break
-
             self.preset_hint.setText(str(preset.get("hint") or ""))
 
         def _on_risk_preset_changed(self, text: str) -> None:
             value = RISK_PRESETS.get(text)
-
             if value is not None:
                 self.risk_spin.setValue(value)
                 self.risk_hint.setText("可直接修改下方比例；选择“自定义”时请在这里输入具体风险比例。")
@@ -1218,27 +874,23 @@ if QT_AVAILABLE:
         def _validate(self) -> Optional[str]:
             code = self.code_edit.text().strip()
             if not code:
-                return "请填写交易品种，例如 BTCUSDT。"
+                return "请填写交易品种，例如 BTCUSDT 或 ETHUSDT。"
 
             if self.start_date.date() > self.end_date.date():
                 return "开始日期不能晚于结束日期。"
 
-            preset = self.data_presets.get(self.preset_combo.currentText()) or {}
-            base_cfg = preset.get("base_cfg") if isinstance(preset.get("base_cfg"), dict) else None
+            if not self.strategy_combo.currentText().strip():
+                return "没有可用策略。请检查 strategy_registry.py 是否注册了策略。"
 
-            # Re-run template precheck at click time so newly-set environment variables are respected.
-            if base_cfg:
-                status, issues, can_run = _template_precheck(base_cfg)
-                if not can_run:
-                    return "当前模板暂不能直接运行：\n" + "\n".join(f"- {issue}" for issue in issues[:6])
-
-            needs_ssh = preset.get("preset_type") == "db_tick"
-            if not needs_ssh and isinstance(base_cfg, dict):
-                pg_cfg = base_cfg.get("postgres", {}) or {}
-                needs_ssh = bool((pg_cfg.get("ssh", {}) or {}).get("enabled"))
-
-            if needs_ssh and not self.ssh_password_edit.text().strip() and not os.environ.get("SSH_PASSWORD"):
+            if not self.ssh_password_edit.text().strip() and not os.environ.get("SSH_PASSWORD"):
                 return "请填写 SSH 密码，或先设置系统环境变量 SSH_PASSWORD。"
+
+            strategy_name = self.strategy_presets.get(self.strategy_combo.currentText(), "")
+            if strategy_name == "donchian_daily_mtf":
+                start_dt = self.start_date.date().toPython()
+                end_dt = self.end_date.date().toPython()
+                if (end_dt - start_dt).days < 30:
+                    return "Donchian 策略需要较长历史数据。请把日期范围至少扩大到 30 天以上。"
 
             return None
 
@@ -1249,7 +901,6 @@ if QT_AVAILABLE:
 
             timeframe, compression = PERIOD_PRESETS[self.period_combo.currentText()]
             strategy_name = self.strategy_presets[self.strategy_combo.currentText()]
-            preset = self.data_presets.get(self.preset_combo.currentText()) or {}
 
             return _build_runtime_config(
                 code=self.code_edit.text().strip(),
@@ -1260,7 +911,6 @@ if QT_AVAILABLE:
                 initial_cash=float(self.cash_spin.value()),
                 risk_per_trade=float(self.risk_spin.value()),
                 strategy_name=strategy_name,
-                preset=preset,
             )
 
         def start_backtest(self) -> None:
@@ -1274,7 +924,7 @@ if QT_AVAILABLE:
             self.run_btn.setEnabled(False)
             self.open_dir_btn.setEnabled(False)
             self.status_label.setText("状态：运行中，请等待...")
-            self.log_view.setPlainText("正在启动回测...\n")
+            self.log_view.setPlainText("正在启动 DB tick 回测...\n")
 
             self.worker = SimpleBacktestWorker(cfg, runs_root=self.runs_root, parent=self)
             self.worker.status.connect(self.status_label.setText)
@@ -1294,8 +944,8 @@ if QT_AVAILABLE:
             self._set_table_rows(self.trades_table, payload.get("trades", []))
             self._set_table_rows(self.orders_table, payload.get("orders", []))
             self._set_table_rows(self.fills_table, payload.get("fills", []))
-
             self._update_charts(payload)
+
             self.log_view.setPlainText(str(payload.get("log_tail") or ""))
             self.tabs.setCurrentWidget(self.summary_table)
 
@@ -1308,13 +958,13 @@ if QT_AVAILABLE:
             detail = str((payload or {}).get("detail") or "")
             self.log_view.setPlainText(f"{message}\n\n技术细节：\n{detail}")
             self.tabs.setCurrentWidget(self.log_view)
+
             QMessageBox.critical(self, "回测失败", message)
 
         def open_run_dir(self) -> None:
             if not self.current_run_dir or not self.current_run_dir.exists():
                 QMessageBox.information(self, "提示", "暂无可打开的运行目录。")
                 return
-
             os.startfile(str(self.current_run_dir))
 
 
