@@ -66,6 +66,14 @@ def _format_date(qdate) -> str:
     return qdate.toString("yyyy-MM-dd")
 
 
+def _safe_read_text_tail(path: Path, lines: int = 200) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    parts = text.splitlines()
+    return "\n".join(parts[-lines:])
+
+
 def _metric_rows(result) -> List[Dict[str, Any]]:
     trade_stats = getattr(result, "trade_stats", {}) or {}
     drawdown = getattr(result, "drawdown", {}) or {}
@@ -185,7 +193,7 @@ if QT_AVAILABLE:
 
         def run(self) -> None:
             try:
-                from my_bt_lab.app.desktop_support import collect_result_metrics, read_text_tail, write_temp_cfg
+                from my_bt_lab.app.desktop_support import collect_result_metrics, write_temp_cfg
                 from my_bt_lab.engines.factory import run as run_engine
                 from my_bt_lab.reporting.writer import prepare_run_dir, write_result
 
@@ -209,7 +217,7 @@ if QT_AVAILABLE:
                     "orders": list(getattr(result, "orders", []) or []),
                     "fills": list(getattr(result, "fills", []) or []),
                     "equity_curve": list(getattr(result, "equity_curve", []) or []),
-                    "log_tail": read_text_tail(log_path, max_lines=200),
+                    "log_tail": _safe_read_text_tail(log_path, lines=200),
                 }
                 self.completed.emit(payload)
             except Exception:
